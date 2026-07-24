@@ -173,6 +173,8 @@ def init_db():
     con.commit()
     if neo_auth is not None:
         neo_auth.init(con)     # Nutzer- und Meta-Tabellen anlegen
+    if neo_shopify is not None:
+        neo_shopify.init(con)  # Tabellen für die Onlineshop-Zahlen
     con.close()
 
 
@@ -663,8 +665,14 @@ def shopify_onlinelinie(res, q):
     if not treffer:
         return res
     try:
-        je_periode = neo_shopify.umsatz_perioden(
-            q["von"], q["bis"], res.get("granularitaet", "monat"))
+        con = db()
+        try:
+            if not neo_shopify.hat_daten(con, q["von"], q["bis"]):
+                return res
+            je_periode = neo_shopify.umsatz_perioden(
+                con, q["von"], q["bis"], res.get("granularitaet", "monat"))
+        finally:
+            con.close()
     except Exception:                                    # noqa: BLE001
         return res                                       # lieber NEO als nichts
     if not je_periode:
@@ -1279,7 +1287,11 @@ def shopify_filialzeile(rows, q):
     if not treffer:
         return rows
     try:
-        s = neo_shopify.filialzeile(q["von"], q["bis"])
+        c2 = db()
+        try:
+            s = neo_shopify.filialzeile(c2, q["von"], q["bis"])
+        finally:
+            c2.close()
     except Exception:                                   # noqa: BLE001
         return rows
     if not s or not s.get("brutto"):
@@ -2715,12 +2727,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
                            "Servereinstellungen."})
         bis = q.get("bis") or date.today().isoformat()
         von = q.get("von") or (date.fromisoformat(bis) - timedelta(days=29)).isoformat()
+        con = db()
         try:
-            daten = neo_shopify.uebersicht(von, bis, frisch=(q.get("frisch") == "1"))
+            # Auf Wunsch vorher frisch abholen, sonst kommt alles aus der Datenbank
+            if q.get("frisch") == "1":
+                # Beim allerersten Mal die volle Historie holen, danach nur den
+                # angezeigten Zeitraum.
+                if neo_shopify.stand(con).get("tage"):
+                    s_von, s_bis = von, bis
+                else:
+                    s_bis = date.today().isoformat()
+                    s_von = (date.today() - timedelta(days=START_TAGE)).isoformat()
+                try:
+                    neo_shopify.sync(con, s_von, s_bis)
+                except neo_shopify.ShopifyFehler as e:
+                    return self.json_out(502, {"error": str(e), "verbunden": True})
+            st = neo_shopify.stand(con)
+            if not st.get("tage"):
+                return self.json_out(200, {
+                    "verbunden": True, "leer": True, "stand": st,
+                    "hinweis": "Noch keine Onlineshop-Daten gespeichert. "
+                               "Mit „Jetzt abrufen“ einmalig laden — danach "
+                               "aktualisiert der Server täglich von selbst."})
+            daten = neo_shopify.uebersicht(con, von, bis)
             daten["verbunden"] = True
+            daten["stand"] = st
             return self.json_out(200, daten)
-        except neo_shopify.ShopifyFehler as e:
-            return self.json_out(502, {"error": str(e), "verbunden": True})
+        finally:
+            con.close()
 
     def _geschuetzt(self, p):
         """Pfade, die im Auth-Modus eine Anmeldung erfordern."""
@@ -3004,14 +3038,39 @@ def env_auth():
     return "Basic " + base64.b64encode(("%s;%s:%s" % (u, m, p)).encode()).decode()
 
 
+def shopify_nachziehen(von, bis, still=False):
+    """Onlineshop-Zahlen nachziehen. Laeuft im Auto-Sync mit; Fehler duerfen den
+    NEO-Sync nicht stoeren."""
+    if neo_shopify is None or not neo_shopify.konfiguriert():
+        return None
+    con = db()
+    try:
+        n = neo_shopify.sync(con, von, bis)
+        if not still:
+            print("  [%s] Shopify: %d Tage aktualisiert."
+                  % (datetime.now().strftime("%H:%M"), n))
+        return n
+    except Exception as e:                                # noqa: BLE001
+        if not still:
+            print("  [%s] Shopify-Sync fehlgeschlagen: %s"
+                  % (datetime.now().strftime("%H:%M"), e))
+        return None
+    finally:
+        con.close()
+
+
 def auto_sync_loop(uhrzeit, tage_zurueck):
     """Wartet bis zur naechsten faelligen Uhrzeit und zieht dann nach."""
     auth = env_auth()
-    if not auth:
+    shop = neo_shopify is not None and neo_shopify.konfiguriert()
+    if not auth and not shop:
         print("  Auto-Sync: NEO_USER / NEO_MANDANT / NEO_PASS nicht gesetzt - deaktiviert.")
         return
+    if not auth:
+        print("  Auto-Sync: NEO-Zugang fehlt - es wird nur Shopify nachgezogen.")
     hh, mm = (int(x) for x in uhrzeit.split(":"))
-    print("  Auto-Sync: täglich um %02d:%02d (letzte %d Tage + Bestand)" % (hh, mm, tage_zurueck))
+    print("  Auto-Sync: täglich um %02d:%02d (letzte %d Tage + Bestand%s)"
+          % (hh, mm, tage_zurueck, " + Onlineshop" if shop else ""))
     while True:
         now = datetime.now()
         ziel = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
@@ -3024,9 +3083,12 @@ def auto_sync_loop(uhrzeit, tage_zurueck):
         bis = date.today()
         von = bis - timedelta(days=tage_zurueck)
         print("  [%s] Auto-Sync startet…" % datetime.now().strftime("%Y-%m-%d %H:%M"))
-        run_sync(auth, von.isoformat(), bis.isoformat(), {"umsatz", "bestand", "artikel"})
-        with JOB_LOCK:
-            err = JOB["error"]
+        err = None
+        if auth:
+            run_sync(auth, von.isoformat(), bis.isoformat(), {"umsatz", "bestand", "artikel"})
+            with JOB_LOCK:
+                err = JOB["error"]
+        shopify_nachziehen(von.isoformat(), bis.isoformat())
         con = db()
         meta_set(con, "autosync_letzter", datetime.now().isoformat(timespec="seconds"))
         meta_set(con, "autosync_status", err or "ok")

@@ -226,284 +226,371 @@ def _z(w):
         return 0.0
 
 
-def _eine_zeile(abfrage):
-    z = shopifyql(abfrage)
-    return z[0] if z else {}
+def _i(w):
+    return int(_z(w))
 
 
-def _granularitaet(tage):
-    if tage <= 31:
-        return "day"
-    if tage <= 180:
-        return "week"
-    return "month"
+def _tag(zeile):
+    """Datum aus einer Zeitreihen-Zeile ziehen (Shopify nennt die Spalte 'day')."""
+    for k in ("day", "week", "month", "hour"):
+        if k in zeile:
+            return str(zeile[k])[:10]
+    return None
 
 
-def _tage(von, bis):
-    from datetime import date
+# ============================================================================
+# Speicherung
+# ----------------------------------------------------------------------------
+# Wie bei der NEO-Warenwirtschaft werden die Zahlen einmal taeglich abgeholt und
+# in der lokalen Datenbank abgelegt. Das Dashboard liest danach nur noch von
+# dort: sofort da, unabhaengig davon ob Shopify gerade erreichbar ist, und ohne
+# bei jedem Seitenaufruf erneut anzufragen.
+# ============================================================================
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS shop_tag(
+  datum TEXT PRIMARY KEY,
+  umsatz REAL, brutto REAL, rabatte REAL, retouren REAL, netto REAL,
+  bestellungen INTEGER, stueck INTEGER,
+  besuche INTEGER, besucher INTEGER,
+  warenkorb INTEGER, checkout INTEGER, kaeufe INTEGER,
+  kunden INTEGER, stammkunden INTEGER
+);
+CREATE TABLE IF NOT EXISTS shop_dim_tag(
+  datum TEXT, art TEXT, name TEXT,
+  umsatz REAL, bestellungen INTEGER, besuche INTEGER,
+  PRIMARY KEY(datum, art, name)
+);
+CREATE TABLE IF NOT EXISTS shop_warenkorb(
+  id TEXT PRIMARY KEY, datum TEXT, wert REAL, artikel TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_shop_dim ON shop_dim_tag(art, datum);
+CREATE INDEX IF NOT EXISTS idx_shop_wk ON shop_warenkorb(datum);
+"""
+
+
+def init(con):
+    con.executescript(SCHEMA)
+    con.commit()
+
+
+def _meta_setzen(con, k, v):
+    con.execute("INSERT INTO meta(k,v) VALUES(?,?) "
+                "ON CONFLICT(k) DO UPDATE SET v=excluded.v", (k, str(v)))
+
+
+def _meta_lesen(con, k, standard=None):
     try:
-        d0 = date.fromisoformat(von)
-        d1 = date.fromisoformat(bis)
-        return max(1, (d1 - d0).days + 1)
-    except Exception:                                          # noqa: BLE001
-        return 30
+        r = con.execute("SELECT v FROM meta WHERE k=?", (k,)).fetchone()
+    except Exception:                                       # noqa: BLE001
+        return standard
+    return r["v"] if r else standard
 
 
-# --------------------------------------------------------------------- Bausteine
-def kennzahlen(von, bis):
-    """Umsatz, Bestellungen, Rabatte, Retouren, Ø Bestellwert."""
-    r = _eine_zeile(
-        "FROM sales SHOW orders, gross_sales, discounts, returns, net_sales, "
-        "total_sales, average_order_value SINCE %s UNTIL %s" % (von, bis))
-    return {
-        "bestellungen": int(_z(r.get("orders"))),
-        "bruttoUmsatz": _z(r.get("gross_sales")),
-        "rabatte": abs(_z(r.get("discounts"))),
-        "retouren": abs(_z(r.get("returns"))),
-        "nettoUmsatz": _z(r.get("net_sales")),
-        "gesamtUmsatz": _z(r.get("total_sales")),
-        "bonwert": _z(r.get("average_order_value")),
-    }
-
-
-def trichter(von, bis):
-    """Besuche → Warenkorb → Checkout → Kauf, inkl. Abbruchquoten."""
-    r = _eine_zeile(
-        "FROM sessions SHOW sessions, online_store_visitors, "
-        "sessions_with_cart_additions, sessions_that_reached_checkout, "
-        "sessions_that_completed_checkout, conversion_rate "
-        "SINCE %s UNTIL %s" % (von, bis))
-    besuche = int(_z(r.get("sessions")))
-    warenkorb = int(_z(r.get("sessions_with_cart_additions")))
-    checkout = int(_z(r.get("sessions_that_reached_checkout")))
-    kauf = int(_z(r.get("sessions_that_completed_checkout")))
-    quote = lambda a, b: ((a / b) * 100) if b else None        # noqa: E731
-    return {
-        "besuche": besuche,
-        "besucher": int(_z(r.get("online_store_visitors"))),
-        "mitWarenkorb": warenkorb,
-        "imCheckout": checkout,
-        "gekauft": kauf,
-        # Shopify liefert die Conversion als Anteil (0,012 = 1,2 %)
-        "conversion": _z(r.get("conversion_rate")) * 100,
-        "warenkorbQuote": quote(warenkorb, besuche),
-        "checkoutQuote": quote(checkout, warenkorb),
-        "kaufQuote": quote(kauf, checkout),
-        # Wie viele springen in welchem Schritt ab
-        "abbruchWarenkorb": warenkorb - checkout,
-        "abbruchCheckout": checkout - kauf,
-        "abbruchCheckoutQuote": quote(checkout - kauf, checkout),
-    }
-
-
-def verlauf(von, bis):
-    """Umsatz, Bestellungen und Besuche im Zeitverlauf."""
-    g = _granularitaet(_tage(von, bis))
-    umsatz = shopifyql("FROM sales SHOW total_sales, orders TIMESERIES %s "
-                       "SINCE %s UNTIL %s" % (g, von, bis))
-    sitz = shopifyql("FROM sessions SHOW sessions TIMESERIES %s "
-                     "SINCE %s UNTIL %s" % (g, von, bis))
-
-    def schluessel(zeile):
-        for k in (g, "day", "week", "month", "hour"):
-            if k in zeile:
-                return str(zeile[k])[:10]
-        return ""
-
-    punkte = {}
-    for z in umsatz:
-        k = schluessel(z)
-        if k:
-            punkte.setdefault(k, {})["umsatz"] = _z(z.get("total_sales"))
-            punkte[k]["bestellungen"] = int(_z(z.get("orders")))
-    for z in sitz:
-        k = schluessel(z)
-        if k:
-            punkte.setdefault(k, {})["besuche"] = int(_z(z.get("sessions")))
-
-    perioden = sorted(punkte)
-    return {
-        "granularitaet": {"day": "Tageswerte", "week": "Wochenwerte",
-                          "month": "Monatswerte"}.get(g, g),
-        "perioden": perioden,
-        "umsatz": [punkte[p].get("umsatz", 0) for p in perioden],
-        "bestellungen": [punkte[p].get("bestellungen", 0) for p in perioden],
-        "besuche": [punkte[p].get("besuche", 0) for p in perioden],
-    }
-
-
-def verkaufte_stueck(von, bis):
-    """Verkaufte Einheiten. Steht in Shopify nicht bei den Umsaetzen, sondern
-    im Bestandsbereich."""
+def stand(con):
+    """Wann wurde zuletzt abgerufen und welcher Zeitraum liegt vor?"""
     try:
-        r = _eine_zeile("FROM inventory SHOW inventory_units_sold "
-                        "SINCE %s UNTIL %s" % (von, bis))
-        return int(_z(r.get("inventory_units_sold")))
-    except ShopifyFehler:
-        return 0
+        r = con.execute("SELECT MIN(datum) a, MAX(datum) b, COUNT(*) n "
+                        "FROM shop_tag").fetchone()
+    except Exception:                                       # noqa: BLE001
+        return {"tage": 0, "von": None, "bis": None, "sync": None}
+    return {"tage": r["n"] or 0, "von": r["a"], "bis": r["b"],
+            "sync": _meta_lesen(con, "shopify_sync")}
 
 
-def filialzeile(von, bis):
-    """Kennzahlen des Onlineshops fuer den Filialvergleich."""
-    k = kennzahlen(von, bis)
-    stueck = verkaufte_stueck(von, bis)
-    bestellungen = k["bestellungen"]
-    return {
-        "brutto": k["gesamtUmsatz"],
-        "belege": bestellungen,
-        "stueck": stueck,
-        "bonwert": (k["gesamtUmsatz"] / bestellungen) if bestellungen else None,
-        "stueckProBeleg": (stueck / bestellungen) if bestellungen else None,
-    }
-
-
-def umsatz_perioden(von, bis, gran="monat"):
-    """Onlineumsatz je Periode, beschriftet wie die NEO-Zeitreihe.
-
-    gran: 'tag' -> 2026-01-15, 'woche' -> 2026-KW03, 'monat' -> 2026-01
-    So lässt sich die Shopify-Linie direkt in die Filial-Zeitreihe einsetzen.
-    """
-    from datetime import date as _date
-    einheit = {"tag": "day", "woche": "week", "monat": "month"}.get(gran, "month")
-    zeilen = shopifyql("FROM sales SHOW total_sales TIMESERIES %s SINCE %s UNTIL %s"
-                       % (einheit, von, bis))
-
-    def etikett(zeile):
-        roh = ""
-        for k in (einheit, "day", "week", "month", "hour"):
-            if k in zeile:
-                roh = str(zeile[k])[:10]
-                break
-        if not roh:
-            return None
-        if gran == "monat":
-            return roh[:7]
-        if gran == "tag":
-            return roh
-        try:                                   # Woche: gleiche Zählung wie SQLite
-            return _date.fromisoformat(roh).strftime("%Y-KW%W")
-        except ValueError:
-            return roh
-
+# ------------------------------------------------------------------ Abholen
+def _reihe(abfrage):
+    """Zeitreihe als {datum: zeile}."""
     raus = {}
-    for z in zeilen:
-        e = etikett(z)
-        if e:
-            raus[e] = raus.get(e, 0.0) + _z(z.get("total_sales"))
+    for z in shopifyql(abfrage):
+        t = _tag(z)
+        if t:
+            raus[t] = z
     return raus
 
 
-def _gruppiert(abfrage, schluesselfeld, wertfelder):
-    zeilen = shopifyql(abfrage)
+def _dim_reihe(abfrage, feld):
+    """Aufschluesselung je Tag als Liste (datum, name, zeile)."""
     raus = []
-    for z in zeilen:
-        eintrag = {"name": (z.get(schluesselfeld) or "Direkt / unbekannt")}
-        for ziel, quelle in wertfelder.items():
-            eintrag[ziel] = _z(z.get(quelle))
-        raus.append(eintrag)
+    for z in shopifyql(abfrage):
+        t = _tag(z)
+        if not t:
+            continue
+        name = (z.get(feld) or "").strip() or "Direkt / unbekannt"
+        raus.append((t, name, z))
     return raus
 
 
-def top_produkte(von, bis, limit=10):
-    return _gruppiert(
-        "FROM sales SHOW gross_sales, orders GROUP BY product_title "
-        "ORDER BY gross_sales DESC LIMIT %d SINCE %s UNTIL %s" % (limit, von, bis),
-        "product_title", {"umsatz": "gross_sales", "bestellungen": "orders"})
+def sync(con, von, bis):
+    """Holt alle Onlineshop-Zahlen des Zeitraums und legt sie in der Datenbank ab.
 
-
-def herkunft(von, bis):
-    return _gruppiert(
-        "FROM sales SHOW orders, total_sales GROUP BY order_referrer_source "
-        "ORDER BY total_sales DESC LIMIT 10 SINCE %s UNTIL %s" % (von, bis),
-        "order_referrer_source", {"umsatz": "total_sales", "bestellungen": "orders"})
-
-
-def geraete(von, bis):
-    return _gruppiert(
-        "FROM sessions SHOW sessions GROUP BY session_device_type "
-        "SINCE %s UNTIL %s" % (von, bis),
-        "session_device_type", {"besuche": "sessions"})
-
-
-def laender(von, bis):
-    return _gruppiert(
-        "FROM sessions SHOW sessions GROUP BY session_country "
-        "ORDER BY sessions DESC LIMIT 8 SINCE %s UNTIL %s" % (von, bis),
-        "session_country", {"besuche": "sessions"})
-
-
-def kunden(von, bis):
-    r = _eine_zeile("FROM sales SHOW customers, returning_customers, "
-                    "returning_customer_rate SINCE %s UNTIL %s" % (von, bis))
-    gesamt = int(_z(r.get("customers")))
-    wieder = int(_z(r.get("returning_customers")))
-    return {"kunden": gesamt, "stammkunden": wieder,
-            "neukunden": max(0, gesamt - wieder),
-            "stammkundenQuote": _z(r.get("returning_customer_rate")) * 100}
-
-
-def abgebrochene_warenkoerbe(von, bis, limit=50):
-    """Liegengebliebene Checkouts samt Warenwert — der größte Hebel im Shop."""
-    d = graphql("""
-        query($q: String!, $n: Int!) {
-          abandonedCheckouts(first: $n, query: $q, reverse: true) {
-            edges { node {
-              id createdAt completedAt
-              totalPriceSet { shopMoney { amount } }
-              lineItems(first: 5) { edges { node { title quantity } } }
-            } }
-          }
-        }""", {"q": "created_at:>=%s created_at:<=%s" % (von, bis), "n": limit})
-    kanten = ((d.get("abandonedCheckouts") or {}).get("edges") or [])
-    liste, summe = [], 0.0
-    for k in kanten:
-        n = k.get("node") or {}
-        if n.get("completedAt"):          # doch noch gekauft
-            continue
-        wert = _z(((n.get("totalPriceSet") or {}).get("shopMoney") or {}).get("amount"))
-        summe += wert
-        artikel = [(e.get("node") or {}).get("title")
-                   for e in ((n.get("lineItems") or {}).get("edges") or [])]
-        liste.append({
-            "datum": (n.get("createdAt") or "")[:10],
-            "wert": wert,
-            "artikel": [a for a in artikel if a],
-        })
-    return {"anzahl": len(liste), "wert": summe,
-            "durchschnitt": (summe / len(liste)) if liste else 0.0,
-            "liste": liste[:20]}
-
-
-# ------------------------------------------------------------------- Gesamtabruf
-def uebersicht(von, bis, frisch=False):
-    """Alle Onlineshop-Kennzahlen für den Zeitraum, mit kurzem Zwischenspeicher."""
-    schluessel = "%s|%s" % (von, bis)
-    if not frisch:
-        eintrag = _CACHE.get(schluessel)
-        if eintrag and (time.time() - eintrag[0]) < CACHE_SEKUNDEN:
-            return eintrag[1]
-
-    daten = {"von": von, "bis": bis}
-    daten["kennzahlen"] = kennzahlen(von, bis)
-    daten["trichter"] = trichter(von, bis)
-    daten["verlauf"] = verlauf(von, bis)
-    daten["topProdukte"] = top_produkte(von, bis)
-    daten["herkunft"] = herkunft(von, bis)
-    daten["geraete"] = geraete(von, bis)
-    daten["laender"] = laender(von, bis)
-    daten["kunden"] = kunden(von, bis)
-    # Abgebrochene Warenkörbe dürfen den Rest nicht blockieren
+    Kommt mit wenigen Abfragen aus, weil Shopify Tageswerte samt Aufschluesselung
+    in einem Rutsch liefert."""
+    verkauf = _reihe("FROM sales SHOW orders, gross_sales, discounts, returns, "
+                     "net_sales, total_sales TIMESERIES day SINCE %s UNTIL %s" % (von, bis))
+    sitzung = _reihe("FROM sessions SHOW sessions, online_store_visitors, "
+                     "sessions_with_cart_additions, sessions_that_reached_checkout, "
+                     "sessions_that_completed_checkout TIMESERIES day "
+                     "SINCE %s UNTIL %s" % (von, bis))
     try:
-        daten["warenkoerbe"] = abgebrochene_warenkoerbe(von, bis)
-    except ShopifyFehler as e:
-        daten["warenkoerbe"] = {"anzahl": 0, "wert": 0.0, "durchschnitt": 0.0,
-                                "liste": [], "hinweis": str(e)}
+        stueck = _reihe("FROM inventory SHOW inventory_units_sold TIMESERIES day "
+                        "SINCE %s UNTIL %s" % (von, bis))
+    except ShopifyFehler:
+        stueck = {}
+    try:
+        kunden = _reihe("FROM sales SHOW customers, returning_customers "
+                        "TIMESERIES day SINCE %s UNTIL %s" % (von, bis))
+    except ShopifyFehler:
+        kunden = {}
 
-    # Umsatz, der im Checkout liegen geblieben ist, ins Verhältnis setzen
-    k = daten["kennzahlen"]["gesamtUmsatz"]
-    w = daten["warenkoerbe"]["wert"]
-    daten["warenkoerbe"]["anteilAmUmsatz"] = ((w / k) * 100) if k else None
+    tage = set(verkauf) | set(sitzung) | set(stueck) | set(kunden)
+    for t in sorted(tage):
+        v, s = verkauf.get(t, {}), sitzung.get(t, {})
+        k = kunden.get(t, {})
+        con.execute("""INSERT INTO shop_tag(datum,umsatz,brutto,rabatte,retouren,netto,
+                         bestellungen,stueck,besuche,besucher,warenkorb,checkout,kaeufe,
+                         kunden,stammkunden)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(datum) DO UPDATE SET
+                         umsatz=excluded.umsatz, brutto=excluded.brutto,
+                         rabatte=excluded.rabatte, retouren=excluded.retouren,
+                         netto=excluded.netto, bestellungen=excluded.bestellungen,
+                         stueck=excluded.stueck, besuche=excluded.besuche,
+                         besucher=excluded.besucher, warenkorb=excluded.warenkorb,
+                         checkout=excluded.checkout, kaeufe=excluded.kaeufe,
+                         kunden=excluded.kunden, stammkunden=excluded.stammkunden""",
+                    (t, _z(v.get("total_sales")), _z(v.get("gross_sales")),
+                     abs(_z(v.get("discounts"))), abs(_z(v.get("returns"))),
+                     _z(v.get("net_sales")), _i(v.get("orders")),
+                     _i(stueck.get(t, {}).get("inventory_units_sold")),
+                     _i(s.get("sessions")), _i(s.get("online_store_visitors")),
+                     _i(s.get("sessions_with_cart_additions")),
+                     _i(s.get("sessions_that_reached_checkout")),
+                     _i(s.get("sessions_that_completed_checkout")),
+                     _i(k.get("customers")), _i(k.get("returning_customers"))))
 
-    daten["abgerufen"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    _CACHE[schluessel] = (time.time(), daten)
-    return daten
+    # Aufschluesselungen: Produkte, Herkunft, Geraete, Laender
+    aufteilungen = (
+        ("produkt", "product_title",
+         "FROM sales SHOW gross_sales, orders GROUP BY product_title "
+         "TIMESERIES day SINCE %s UNTIL %s" % (von, bis), "umsatz"),
+        ("quelle", "order_referrer_source",
+         "FROM sales SHOW total_sales, orders GROUP BY order_referrer_source "
+         "TIMESERIES day SINCE %s UNTIL %s" % (von, bis), "umsatz"),
+        ("geraet", "session_device_type",
+         "FROM sessions SHOW sessions GROUP BY session_device_type "
+         "TIMESERIES day SINCE %s UNTIL %s" % (von, bis), "besuche"),
+        ("land", "session_country",
+         "FROM sessions SHOW sessions GROUP BY session_country "
+         "TIMESERIES day SINCE %s UNTIL %s" % (von, bis), "besuche"),
+    )
+    for art, feld, abfrage, _ in aufteilungen:
+        try:
+            zeilen = _dim_reihe(abfrage, feld)
+        except ShopifyFehler:
+            continue
+        con.execute("DELETE FROM shop_dim_tag WHERE art=? AND datum BETWEEN ? AND ?",
+                    (art, von, bis))
+        for t, name, z in zeilen:
+            umsatz = _z(z.get("gross_sales") if "gross_sales" in z else z.get("total_sales"))
+            con.execute("""INSERT INTO shop_dim_tag(datum,art,name,umsatz,bestellungen,besuche)
+                           VALUES(?,?,?,?,?,?)
+                           ON CONFLICT(datum,art,name) DO UPDATE SET
+                             umsatz=excluded.umsatz,
+                             bestellungen=excluded.bestellungen,
+                             besuche=excluded.besuche""",
+                        (t, art, name, umsatz, _i(z.get("orders")), _i(z.get("sessions"))))
+
+    # Liegengebliebene Warenkoerbe
+    try:
+        for w in _warenkoerbe_holen(von, bis):
+            con.execute("INSERT INTO shop_warenkorb(id,datum,wert,artikel) VALUES(?,?,?,?) "
+                        "ON CONFLICT(id) DO UPDATE SET datum=excluded.datum, "
+                        "wert=excluded.wert, artikel=excluded.artikel",
+                        (w["id"], w["datum"], w["wert"], w["artikel"]))
+    except ShopifyFehler:
+        pass
+
+    _meta_setzen(con, "shopify_sync", time.strftime("%Y-%m-%d %H:%M:%S"))
+    con.commit()
+    return len(tage)
+
+
+def _warenkoerbe_holen(von, bis, seiten=5):
+    """Abgebrochene Checkouts, seitenweise."""
+    raus, cursor = [], None
+    for _ in range(seiten):
+        d = graphql("""
+            query($q: String!, $n: Int!, $c: String) {
+              abandonedCheckouts(first: $n, query: $q, after: $c) {
+                edges { cursor node {
+                  id createdAt completedAt
+                  totalPriceSet { shopMoney { amount } }
+                  lineItems(first: 5) { edges { node { title } } }
+                } }
+                pageInfo { hasNextPage endCursor }
+              }
+            }""", {"q": "created_at:>=%s created_at:<=%s" % (von, bis),
+                   "n": 100, "c": cursor})
+        block = d.get("abandonedCheckouts") or {}
+        for k in (block.get("edges") or []):
+            n = k.get("node") or {}
+            if n.get("completedAt"):
+                continue
+            artikel = [(e.get("node") or {}).get("title")
+                       for e in ((n.get("lineItems") or {}).get("edges") or [])]
+            raus.append({
+                "id": n.get("id"),
+                "datum": (n.get("createdAt") or "")[:10],
+                "wert": _z(((n.get("totalPriceSet") or {}).get("shopMoney") or {}).get("amount")),
+                "artikel": ", ".join(a for a in artikel if a),
+            })
+        seite = block.get("pageInfo") or {}
+        if not seite.get("hasNextPage"):
+            break
+        cursor = seite.get("endCursor")
+    return raus
+
+
+# --------------------------------------------------------------- Auswertungen
+def _summe(con, von, bis):
+    r = con.execute("""SELECT COALESCE(SUM(umsatz),0) umsatz, COALESCE(SUM(brutto),0) brutto,
+                         COALESCE(SUM(rabatte),0) rabatte, COALESCE(SUM(retouren),0) retouren,
+                         COALESCE(SUM(netto),0) netto, COALESCE(SUM(bestellungen),0) bestellungen,
+                         COALESCE(SUM(stueck),0) stueck, COALESCE(SUM(besuche),0) besuche,
+                         COALESCE(SUM(besucher),0) besucher, COALESCE(SUM(warenkorb),0) warenkorb,
+                         COALESCE(SUM(checkout),0) checkout, COALESCE(SUM(kaeufe),0) kaeufe,
+                         COALESCE(SUM(kunden),0) kunden, COALESCE(SUM(stammkunden),0) stammkunden,
+                         COUNT(*) tage
+                       FROM shop_tag WHERE datum BETWEEN ? AND ?""", (von, bis)).fetchone()
+    return dict(r) if r else {}
+
+
+def hat_daten(con, von=None, bis=None):
+    try:
+        if von and bis:
+            r = con.execute("SELECT COUNT(*) n FROM shop_tag WHERE datum BETWEEN ? AND ?",
+                            (von, bis)).fetchone()
+        else:
+            r = con.execute("SELECT COUNT(*) n FROM shop_tag").fetchone()
+        return bool(r and r["n"])
+    except Exception:                                       # noqa: BLE001
+        return False
+
+
+def umsatz_perioden(con, von, bis, gran="monat"):
+    """Onlineumsatz je Periode, beschriftet wie die NEO-Zeitreihe."""
+    ausdruck = {"tag": "datum",
+                "woche": "strftime('%Y-KW%W', datum)",
+                "monat": "substr(datum,1,7)"}.get(gran, "substr(datum,1,7)")
+    raus = {}
+    for r in con.execute("SELECT %s AS p, SUM(umsatz) s FROM shop_tag "
+                         "WHERE datum BETWEEN ? AND ? GROUP BY p" % ausdruck, (von, bis)):
+        raus[r["p"]] = r["s"] or 0.0
+    return raus
+
+
+def filialzeile(con, von, bis):
+    """Kennzahlen des Onlineshops fuer den Filialvergleich."""
+    s = _summe(con, von, bis)
+    if not s or not s.get("bestellungen"):
+        if not s or not s.get("umsatz"):
+            return None
+    b = s.get("bestellungen") or 0
+    return {"brutto": s.get("umsatz") or 0.0, "belege": b, "stueck": s.get("stueck") or 0,
+            "bonwert": ((s["umsatz"] / b) if b else None),
+            "stueckProBeleg": ((s["stueck"] / b) if b else None)}
+
+
+def _dim(con, von, bis, art, wert="umsatz", limit=10):
+    spalte = "SUM(umsatz)" if wert == "umsatz" else "SUM(besuche)"
+    zeilen = []
+    for r in con.execute(
+            "SELECT name, SUM(umsatz) u, SUM(bestellungen) b, SUM(besuche) v "
+            "FROM shop_dim_tag WHERE art=? AND datum BETWEEN ? AND ? "
+            "GROUP BY name HAVING %s > 0 ORDER BY %s DESC LIMIT ?" % (spalte, spalte),
+            (art, von, bis, limit)):
+        zeilen.append({"name": r["name"], "umsatz": r["u"] or 0.0,
+                       "bestellungen": r["b"] or 0, "besuche": r["v"] or 0})
+    return zeilen
+
+
+def uebersicht(con, von, bis):
+    """Alle Onlineshop-Kennzahlen des Zeitraums, ausschliesslich aus der Datenbank."""
+    s = _summe(con, von, bis)
+    b = s.get("bestellungen") or 0
+    umsatz = s.get("umsatz") or 0.0
+
+    besuche = s.get("besuche") or 0
+    warenkorb = s.get("warenkorb") or 0
+    checkout = s.get("checkout") or 0
+    kaeufe = s.get("kaeufe") or 0
+    quote = lambda a, c: ((a / c) * 100) if c else None      # noqa: E731
+
+    kunden = s.get("kunden") or 0
+    stamm = s.get("stammkunden") or 0
+
+    wk = con.execute("SELECT COUNT(*) n, COALESCE(SUM(wert),0) w FROM shop_warenkorb "
+                     "WHERE datum BETWEEN ? AND ?", (von, bis)).fetchone()
+    liste = [{"datum": r["datum"], "wert": r["wert"],
+              "artikel": [a for a in (r["artikel"] or "").split(", ") if a]}
+             for r in con.execute(
+                 "SELECT datum, wert, artikel FROM shop_warenkorb "
+                 "WHERE datum BETWEEN ? AND ? ORDER BY datum DESC LIMIT 20", (von, bis))]
+
+    # Verlauf: passende Verdichtung wie im uebrigen Dashboard
+    tage = (s.get("tage") or 0)
+    gran = "tag" if tage <= 45 else "woche" if tage <= 200 else "monat"
+    ausdruck = {"tag": "datum", "woche": "strftime('%Y-KW%W', datum)",
+                "monat": "substr(datum,1,7)"}[gran]
+    perioden, u_werte, b_werte, v_werte = [], [], [], []
+    for r in con.execute("SELECT %s AS p, SUM(umsatz) u, SUM(bestellungen) b, "
+                         "SUM(besuche) v FROM shop_tag WHERE datum BETWEEN ? AND ? "
+                         "GROUP BY p ORDER BY p" % ausdruck, (von, bis)):
+        perioden.append(r["p"])
+        u_werte.append(r["u"] or 0.0)
+        b_werte.append(r["b"] or 0)
+        v_werte.append(r["v"] or 0)
+
+    st = stand(con)
+    return {
+        "von": von, "bis": bis,
+        "kennzahlen": {
+            "bestellungen": b, "bruttoUmsatz": s.get("brutto") or 0.0,
+            "rabatte": s.get("rabatte") or 0.0, "retouren": s.get("retouren") or 0.0,
+            "nettoUmsatz": s.get("netto") or 0.0, "gesamtUmsatz": umsatz,
+            "bonwert": (umsatz / b) if b else 0.0,
+        },
+        "trichter": {
+            "besuche": besuche, "besucher": s.get("besucher") or 0,
+            "mitWarenkorb": warenkorb, "imCheckout": checkout, "gekauft": kaeufe,
+            "conversion": quote(kaeufe, besuche) or 0.0,
+            "warenkorbQuote": quote(warenkorb, besuche),
+            "checkoutQuote": quote(checkout, warenkorb),
+            "kaufQuote": quote(kaeufe, checkout),
+            "abbruchWarenkorb": max(0, warenkorb - checkout),
+            "abbruchCheckout": max(0, checkout - kaeufe),
+            "abbruchCheckoutQuote": quote(checkout - kaeufe, checkout),
+        },
+        "verlauf": {
+            "granularitaet": {"tag": "Tageswerte", "woche": "Wochenwerte",
+                              "monat": "Monatswerte"}[gran],
+            "perioden": perioden, "umsatz": u_werte,
+            "bestellungen": b_werte, "besuche": v_werte,
+        },
+        "topProdukte": _dim(con, von, bis, "produkt", "umsatz"),
+        "herkunft": _dim(con, von, bis, "quelle", "umsatz"),
+        "geraete": _dim(con, von, bis, "geraet", "besuche"),
+        "laender": _dim(con, von, bis, "land", "besuche", limit=8),
+        "kunden": {"kunden": kunden, "stammkunden": stamm,
+                   "neukunden": max(0, kunden - stamm),
+                   "stammkundenQuote": quote(stamm, kunden) or 0.0},
+        "warenkoerbe": {
+            "anzahl": wk["n"] or 0, "wert": wk["w"] or 0.0,
+            "durchschnitt": ((wk["w"] / wk["n"]) if wk["n"] else 0.0),
+            "anteilAmUmsatz": ((wk["w"] / umsatz * 100) if umsatz else None),
+            "liste": liste,
+        },
+        "tageMitDaten": s.get("tage") or 0,
+        "abgerufen": st.get("sync"),
+        "datenVon": st.get("von"), "datenBis": st.get("bis"),
+    }

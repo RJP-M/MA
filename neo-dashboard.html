@@ -705,7 +705,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <h3>Über</h3>
       <div class="info">
         <b>Meister Parfümerie Dashboard</b><br>
-        Version <span id="einstVersion">v2026-07-24.45</span><br>
+        Version <span id="einstVersion">v2026-07-24.46</span><br>
         Datenquelle NEO-WWS über die lokale Zwischenablage <code>neo-cache.db</code>.
       </div>
       <div class="row" style="margin-top:14px">
@@ -1195,9 +1195,11 @@ body:not(.servermodus) .nur-server{display:none!important}
       <div class="card">
         <h2>Onlineshop <span class="r">
           <span class="hint" id="shopStand"></span>
-          <button class="ghost sm" id="btnShopNeu">Aktualisieren</button></span></h2>
+          <button class="ghost sm" id="btnShopNeu">Jetzt abrufen</button></span></h2>
         <div class="hint">Zahlen kommen direkt aus Shopify — unabhängig von der NEO-Warenwirtschaft.
-          Sie folgen dem Zeitraum aus dem Filter oben.</div>
+          Sie werden wie die NEO-Daten täglich um 6:00 Uhr abgeholt und gespeichert; die Anzeige
+          kommt aus der Datenbank und ist deshalb sofort da. „Jetzt abrufen“ holt zwischendurch
+          den aktuellen Stand. Der Zeitraum folgt dem Filter oben.</div>
         <div class="msg" id="shopMsg"></div>
       </div>
 
@@ -2263,14 +2265,18 @@ function shopLeeren(){
 }
 async function loadShopify(frisch){
   const f=filters();
-  msg('#shopMsg','Hole Zahlen von Shopify…','info');
+  msg('#shopMsg',frisch?'Hole Zahlen von Shopify… das kann beim ersten Mal etwas dauern.':'Lade…','info');
   let d;
   try{ d=await raw('/data/shopify',{von:f.von,bis:f.bis,frisch:frisch?1:''}); }
   catch(e){ shopLeeren(); msg('#shopMsg',e.message,'err'); return; }
   if(!d.verbunden){ shopLeeren(); msg('#shopMsg',d.hinweis||'Shopify ist noch nicht verbunden.','info'); return; }
+  if(d.leer){ shopLeeren(); msg('#shopMsg',d.hinweis||'Noch keine Onlineshop-Daten gespeichert.','info');
+    $('#shopStand').textContent=''; return; }
   msg('#shopMsg','');
   S.last.shopify=d;
-  $('#shopStand').textContent = d.abgerufen ? ('Stand '+d.abgerufen.replace('T',' ')) : '';
+  const st=d.stand||{};
+  $('#shopStand').textContent = (d.abgerufen ? ('Zuletzt abgerufen '+String(d.abgerufen).replace('T',' ')) : '')
+    + (st.von&&st.bis ? ` · gespeichert ${st.von} bis ${st.bis}` : '');
 
   // Kennzahlen
   const k=d.kennzahlen, t=d.trichter, w=d.warenkoerbe, ku=d.kunden;
