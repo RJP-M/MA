@@ -1,0 +1,3 @@
+# Keine externen Pakete nötig – das Dashboard nutzt ausschließlich die
+# Python-Standardbibliothek. Diese Datei sorgt nur dafür, dass Render das
+# Projekt als Python erkennt.

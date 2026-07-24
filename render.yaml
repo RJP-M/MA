@@ -1,0 +1,52 @@
+# Render Blueprint für das Meister Parfümerie Dashboard
+# ----------------------------------------------------
+# Legt automatisch einen Web-Dienst in Frankfurt (EU) mit persistentem
+# Datenträger für die Cache-Datenbank an. Nach dem Import in Render müssen nur
+# noch die geheimen Werte (NEO-Zugang, Admin) eingetragen werden.
+
+services:
+  - type: web
+    name: meister-dashboard
+    runtime: python
+    region: frankfurt          # EU-Region wegen DSGVO
+    plan: starter              # persistenter Datenträger erfordert einen bezahlten Plan
+    branch: main
+    # Kein Build nötig (nur Python-Standardbibliothek); leeres requirements.txt genügt.
+    buildCommand: "python --version"
+    startCommand: "python neo-proxy.py --auth --https --auto-sync 06:00 --db /var/data/neo-cache.db"
+    healthCheckPath: /ping
+
+    # Persistenter Speicher: hier liegt die SQLite-Datenbank (Cache + Benutzerkonten).
+    # Überlebt Neustarts und neue Deployments.
+    disk:
+      name: neo-daten
+      mountPath: /var/data
+      sizeGB: 1
+
+    envVars:
+      # Feste Python-Version
+      - key: PYTHON_VERSION
+        value: "3.12.4"
+
+      # Ladespanne des Erstabrufs / der Auswertungen in Tagen (730 = 24 Monate)
+      - key: START_TAGE
+        value: "730"
+
+      # Signaturschlüssel für Sitzungen und Geräte-Tokens: einmalig zufällig erzeugt
+      - key: SECRET_KEY
+        generateValue: true
+
+      # ----- Diese Werte trägst du in Render selbst ein (sync: false = nicht im Code) -----
+      # NEO-Servicezugang (der eigens angelegte API-Benutzer)
+      - key: NEO_USER
+        sync: false
+      - key: NEO_MANDANT
+        sync: false
+      - key: NEO_PASS
+        sync: false
+
+      # Erster Administrator, wird beim allerersten Start angelegt
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASS
+        sync: false
