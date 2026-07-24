@@ -705,7 +705,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <h3>Über</h3>
       <div class="info">
         <b>Meister Parfümerie Dashboard</b><br>
-        Version <span id="einstVersion">v2026-07-21.38</span><br>
+        Version <span id="einstVersion">v2026-07-21.39</span><br>
         Datenquelle NEO-WWS über die lokale Zwischenablage <code>neo-cache.db</code>.
       </div>
       <div class="row" style="margin-top:14px">
@@ -1627,7 +1627,6 @@ async function loadOverview(){
     K('Belege',nf0.format(a.belege),d(a.belege,vp.belege),d(a.belege,vj.belege)),
     K('Ø je Tag',eur(a.umsatzProTag),null,null),
     K('Ø Bonwert',eur2(bon),d(bon,bonVP),null),
-    K('Verkaufte Stück',nf0.format(a.stueck),d(a.stueck,vp.stueck),d(a.stueck,vj.stueck)),
     K('Marge',pct0(a.marge),a.marge&&vp.marge?a.marge-vp.marge:null,a.marge&&vj.marge?a.marge-vj.marge:null),
   ].join('');
   const p=kpi.perioden;
