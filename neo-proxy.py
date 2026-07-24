@@ -2577,8 +2577,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not neo_shopify.konfiguriert():
             return self.json_out(200, {
                 "verbunden": False,
-                "hinweis": "Shopify ist noch nicht verbunden. Hinterlege SHOPIFY_SHOP "
-                           "und SHOPIFY_TOKEN in den Servereinstellungen."})
+                "hinweis": "Shopify ist noch nicht verbunden. Hinterlege SHOPIFY_SHOP, "
+                           "SHOPIFY_CLIENT_ID und SHOPIFY_CLIENT_SECRET in den "
+                           "Servereinstellungen."})
         bis = q.get("bis") or date.today().isoformat()
         von = q.get("von") or (date.fromisoformat(bis) - timedelta(days=29)).isoformat()
         try:

@@ -11,18 +11,28 @@ kennt.
 Ausschließlich Python-Standardbibliothek, wie der Rest des Projekts.
 
 Zugang über Umgebungsvariablen (nie im Code):
-    SHOPIFY_SHOP    z. B. meinshop.myshopify.com
-    SHOPIFY_TOKEN   Admin-API-Token der eigenen App (shpat_…)
-    SHOPIFY_API_VERSION  optional, Standard siehe unten
+    SHOPIFY_SHOP           z. B. meinshop.myshopify.com
+    SHOPIFY_CLIENT_ID      Client-ID der App aus dem Dev-Dashboard
+    SHOPIFY_CLIENT_SECRET  Schlüssel der App (shpss_…)
+    SHOPIFY_API_VERSION    optional, Standard siehe unten
+
+Seit Januar 2026 vergibt Shopify keine dauerhaften Admin-Token mehr. Der Server
+tauscht stattdessen Client-ID und Schlüssel selbst gegen ein Zugriffstoken
+(Client-Credentials-Verfahren); das Token gilt 24 Stunden und wird hier
+automatisch erneuert.
+
+Ältere Zugänge mit festem Token funktionieren weiterhin:
+    SHOPIFY_TOKEN   Admin-API-Token (shpat_…)
 """
 
 import json
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
-API_VERSION_STD = "2026-01"
+API_VERSION_STD = "2026-07"
 TIMEOUT = 30
 
 # Kleiner Zwischenspeicher, damit mehrfaches Öffnen des Tabs nicht jedes Mal
@@ -36,20 +46,91 @@ class ShopifyFehler(Exception):
     pass
 
 
+def _shop_adresse():
+    shop = (os.environ.get("SHOPIFY_SHOP") or "").strip()
+    shop = shop.replace("https://", "").replace("http://", "").strip("/")
+    # „meinshop“ genügt, „.myshopify.com“ wird ergänzt
+    if shop and "." not in shop:
+        shop += ".myshopify.com"
+    return shop
+
+
 def konfiguriert():
-    return bool(os.environ.get("SHOPIFY_SHOP") and os.environ.get("SHOPIFY_TOKEN"))
+    if not _shop_adresse():
+        return False
+    if os.environ.get("SHOPIFY_TOKEN"):
+        return True
+    return bool(os.environ.get("SHOPIFY_CLIENT_ID")
+                and os.environ.get("SHOPIFY_CLIENT_SECRET"))
+
+
+# Zwischenspeicher für das selbst geholte Token (gilt 24 Stunden)
+_TOKEN = {"wert": None, "gueltig_bis": 0.0}
+
+
+def _token_holen():
+    """Client-ID und Schlüssel gegen ein Zugriffstoken tauschen."""
+    shop = _shop_adresse()
+    cid = (os.environ.get("SHOPIFY_CLIENT_ID") or "").strip()
+    secret = (os.environ.get("SHOPIFY_CLIENT_SECRET") or "").strip()
+
+    if _TOKEN["wert"] and time.time() < _TOKEN["gueltig_bis"] - 60:
+        return _TOKEN["wert"]
+
+    daten = urllib.parse.urlencode({
+        "grant_type": "client_credentials",
+        "client_id": cid,
+        "client_secret": secret,
+    }).encode("utf-8")
+    url = "https://%s/admin/oauth/access_token" % shop
+    req = urllib.request.Request(url, data=daten, method="POST")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    req.add_header("Accept", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            antwort = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        rumpf = ""
+        try:
+            rumpf = e.read().decode("utf-8", "replace")[:300]
+        except Exception:                                       # noqa: BLE001
+            pass
+        if "shop_not_permitted" in rumpf:
+            raise ShopifyFehler(
+                "Shopify verweigert den Tausch (shop_not_permitted): App und Shop "
+                "müssen in derselben Organisation im Dev-Dashboard liegen.")
+        if e.code in (400, 401):
+            raise ShopifyFehler("Client-ID oder Schlüssel stimmen nicht (HTTP %d). %s"
+                                % (e.code, rumpf))
+        raise ShopifyFehler("Token-Abruf fehlgeschlagen (HTTP %d). %s" % (e.code, rumpf))
+    except urllib.error.URLError as e:
+        raise ShopifyFehler("Shopify ist nicht erreichbar: %s" % e.reason)
+
+    tok = antwort.get("access_token")
+    if not tok:
+        raise ShopifyFehler("Shopify hat kein Token zurückgegeben.")
+    _TOKEN["wert"] = tok
+    _TOKEN["gueltig_bis"] = time.time() + float(antwort.get("expires_in") or 86399)
+    return tok
 
 
 def _zugang():
-    shop = (os.environ.get("SHOPIFY_SHOP") or "").strip()
-    token = (os.environ.get("SHOPIFY_TOKEN") or "").strip()
-    if not shop or not token:
+    shop = _shop_adresse()
+    if not shop:
         raise ShopifyFehler(
-            "Shopify ist noch nicht verbunden. Bitte SHOPIFY_SHOP und "
-            "SHOPIFY_TOKEN in den Servereinstellungen hinterlegen.")
-    shop = shop.replace("https://", "").replace("http://", "").strip("/")
+            "Shopify ist noch nicht verbunden. Bitte SHOPIFY_SHOP in den "
+            "Servereinstellungen hinterlegen.")
     version = (os.environ.get("SHOPIFY_API_VERSION") or API_VERSION_STD).strip()
-    return shop, token, version
+
+    festes = (os.environ.get("SHOPIFY_TOKEN") or "").strip()
+    if festes:
+        return shop, festes, version          # älterer Zugang mit festem Token
+    if not (os.environ.get("SHOPIFY_CLIENT_ID")
+            and os.environ.get("SHOPIFY_CLIENT_SECRET")):
+        raise ShopifyFehler(
+            "Shopify ist noch nicht verbunden. Bitte SHOPIFY_CLIENT_ID und "
+            "SHOPIFY_CLIENT_SECRET in den Servereinstellungen hinterlegen.")
+    return shop, _token_holen(), version
 
 
 def graphql(query, variables=None):
@@ -77,8 +158,18 @@ def graphql(query, variables=None):
                 time.sleep(2 * (versuch + 1))
                 continue
             if e.code == 401:
+                # Selbst geholtes Token evtl. abgelaufen: einmal neu holen
+                if not os.environ.get("SHOPIFY_TOKEN") and versuch < 2:
+                    _TOKEN["wert"] = None
+                    _TOKEN["gueltig_bis"] = 0.0
+                    shop, token, version = _zugang()
+                    req = urllib.request.Request(url, data=daten, method="POST")
+                    req.add_header("Content-Type", "application/json")
+                    req.add_header("X-Shopify-Access-Token", token)
+                    req.add_header("Accept", "application/json")
+                    continue
                 raise ShopifyFehler("Shopify lehnt den Zugang ab (401). "
-                                    "Stimmt das Token noch?")
+                                    "Stimmen Client-ID und Schlüssel noch?")
             if e.code == 403:
                 raise ShopifyFehler("Shopify verweigert den Zugriff (403). "
                                     "Fehlt der App eine Berechtigung, etwa "

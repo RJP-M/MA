@@ -52,7 +52,12 @@ services:
         sync: false
 
       # Shopify-Onlineshop (für den Tab „Onlineshop")
+      # Client-ID und Schlüssel stehen im Shopify-Dev-Dashboard unter
+      # App → Einstellungen → Anmeldedaten. Der Server tauscht sie selbst
+      # gegen ein Zugriffstoken.
       - key: SHOPIFY_SHOP
         sync: false
-      - key: SHOPIFY_TOKEN
+      - key: SHOPIFY_CLIENT_ID
+        sync: false
+      - key: SHOPIFY_CLIENT_SECRET
         sync: false
