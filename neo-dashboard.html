@@ -705,7 +705,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <h3>Über</h3>
       <div class="info">
         <b>Meister Parfümerie Dashboard</b><br>
-        Version <span id="einstVersion">v2026-07-21.37</span><br>
+        Version <span id="einstVersion">v2026-07-21.38</span><br>
         Datenquelle NEO-WWS über die lokale Zwischenablage <code>neo-cache.db</code>.
       </div>
       <div class="row" style="margin-top:14px">
@@ -1599,7 +1599,7 @@ async function loadTab(t){try{
 async function loadOverview(){
   const f=filters();
   const kpi=await raw('/data/kpi',f), pp=kpi.perioden;
-  const [trend,trendVP,trendVJ,rank,zFil,zMarke,rWg]=await Promise.all([
+  const [trend,trendVP,trendVJ,rank,zFil,zMarke,rWg,rYtd]=await Promise.all([
     raw('/data/trend',f),
     raw('/data/trend',{...f,von:pp.vorperiode[0],bis:pp.vorperiode[1]}),
     raw('/data/trend',{...f,von:pp.vorjahr[0],bis:pp.vorjahr[1]}),
