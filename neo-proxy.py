@@ -1260,13 +1260,27 @@ def q_filialbenchmark(con, q):
         r["umsatzProKasseTag"] = (r["brutto"] / k / tage) if k else None
         r["bonwert"] = (r["brutto"] / r["belege"]) if r["belege"] else None
         r["stueckProBeleg"] = (r["stueck"] / r["belege"]) if r["belege"] else None
+    # Onlineshop einmal zentral bestimmen. Der Name geht vor, das
+    # NEO-Kennzeichen zaehlt nur, wenn es genau eine Zeile markiert -- sonst
+    # wuerde eine falsch gesetzte Markierung ganze Ladenfilialen ausschliessen.
+    nach_name = [r for r in rows if ist_onlinefiliale(r.get("dim"))]
+    if nach_name:
+        online_zeilen = nach_name
+    else:
+        markiert = [r for r in rows if r.get("webshop")]
+        online_zeilen = markiert if len(markiert) == 1 else []
+    for r in rows:
+        r["istOnline"] = r in online_zeilen
+
     rows = shopify_filialzeile(rows, q)
 
-    ref = [r["umsatzProKasseTag"] for r in rows if r["umsatzProKasseTag"] and not r["webshop"]]
+    # Der Vergleichsschnitt gilt nur fuer stationaere Filialen
+    ref = [r["umsatzProKasseTag"] for r in rows
+           if r["umsatzProKasseTag"] and not r["istOnline"]]
     schnitt = sum(ref) / len(ref) if ref else None
     for r in rows:
         r["vsSchnitt"] = ((r["umsatzProKasseTag"] / schnitt - 1) * 100) \
-            if (schnitt and r["umsatzProKasseTag"] and not r["webshop"]) else None
+            if (schnitt and r["umsatzProKasseTag"] and not r["istOnline"]) else None
     rows.sort(key=lambda r: -(r.get("brutto") or 0))
     online = any(r.get("quelle") == "shopify" for r in rows)
     return {"rows": rows, "tage": tage, "schnittProKasseTag": schnitt,
@@ -1282,10 +1296,13 @@ def shopify_filialzeile(rows, q):
     echten Umsatz hochgerechnet."""
     if neo_shopify is None or not neo_shopify.konfiguriert():
         return rows
-    treffer = [r for r in rows
-               if r.get("webshop") or ist_onlinefiliale(r.get("dim"))]
-    if not treffer:
+
+    # istOnline wurde vorher zentral bestimmt (Name vor NEO-Kennzeichen).
+    online = [r for r in rows if r.get("istOnline")]
+    if not online:
         return rows
+    haupt = max(online, key=lambda r: (r.get("brutto") or 0))
+
     try:
         c2 = db()
         try:
@@ -1296,17 +1313,6 @@ def shopify_filialzeile(rows, q):
         return rows
     if not s or not s.get("brutto"):
         return rows
-
-    # Bei mehreren Webshop-Filialen alles auf die umsatzstaerkste buchen
-    treffer.sort(key=lambda r: -(r.get("brutto") or 0))
-    haupt = treffer[0]
-    for r in treffer[1:]:
-        for k in ("brutto", "belege", "stueck", "rohertrag", "netto"):
-            if r.get(k):
-                r[k] = 0
-        r["bonwert"] = r["stueckProBeleg"] = None
-        r["marge"] = None
-        r["quelle"] = "shopify"
 
     rate = haupt.get("marge")            # Margenrate aus dem NEO-Sortiment
     haupt["brutto"] = s["brutto"]
