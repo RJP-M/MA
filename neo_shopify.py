@@ -332,6 +332,31 @@ def verlauf(von, bis):
     }
 
 
+def verkaufte_stueck(von, bis):
+    """Verkaufte Einheiten. Steht in Shopify nicht bei den Umsaetzen, sondern
+    im Bestandsbereich."""
+    try:
+        r = _eine_zeile("FROM inventory SHOW inventory_units_sold "
+                        "SINCE %s UNTIL %s" % (von, bis))
+        return int(_z(r.get("inventory_units_sold")))
+    except ShopifyFehler:
+        return 0
+
+
+def filialzeile(von, bis):
+    """Kennzahlen des Onlineshops fuer den Filialvergleich."""
+    k = kennzahlen(von, bis)
+    stueck = verkaufte_stueck(von, bis)
+    bestellungen = k["bestellungen"]
+    return {
+        "brutto": k["gesamtUmsatz"],
+        "belege": bestellungen,
+        "stueck": stueck,
+        "bonwert": (k["gesamtUmsatz"] / bestellungen) if bestellungen else None,
+        "stueckProBeleg": (stueck / bestellungen) if bestellungen else None,
+    }
+
+
 def umsatz_perioden(von, bis, gran="monat"):
     """Onlineumsatz je Periode, beschriftet wie die NEO-Zeitreihe.
 

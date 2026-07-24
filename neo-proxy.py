@@ -1252,12 +1252,66 @@ def q_filialbenchmark(con, q):
         r["umsatzProKasseTag"] = (r["brutto"] / k / tage) if k else None
         r["bonwert"] = (r["brutto"] / r["belege"]) if r["belege"] else None
         r["stueckProBeleg"] = (r["stueck"] / r["belege"]) if r["belege"] else None
+    rows = shopify_filialzeile(rows, q)
+
     ref = [r["umsatzProKasseTag"] for r in rows if r["umsatzProKasseTag"] and not r["webshop"]]
     schnitt = sum(ref) / len(ref) if ref else None
     for r in rows:
         r["vsSchnitt"] = ((r["umsatzProKasseTag"] / schnitt - 1) * 100) \
             if (schnitt and r["umsatzProKasseTag"] and not r["webshop"]) else None
-    return {"rows": rows, "tage": tage, "schnittProKasseTag": schnitt}
+    rows.sort(key=lambda r: -(r.get("brutto") or 0))
+    online = any(r.get("quelle") == "shopify" for r in rows)
+    return {"rows": rows, "tage": tage, "schnittProKasseTag": schnitt,
+            "onlineQuelle": "shopify" if online else None}
+
+
+def shopify_filialzeile(rows, q):
+    """Ersetzt im Filialvergleich die Onlineshop-Zeile durch die Shopify-Zahlen.
+
+    Umsatz, Bestellungen, Stueck und Bonwert sind dann Tatsachen aus Shopify.
+    Die Marge kennt Shopify nicht (dort fehlen die Einkaufspreise); sie bleibt
+    die Rate aus dem NEO-Sortiment, der Rohertrag wird passend dazu auf den
+    echten Umsatz hochgerechnet."""
+    if neo_shopify is None or not neo_shopify.konfiguriert():
+        return rows
+    treffer = [r for r in rows
+               if r.get("webshop") or ist_onlinefiliale(r.get("dim"))]
+    if not treffer:
+        return rows
+    try:
+        s = neo_shopify.filialzeile(q["von"], q["bis"])
+    except Exception:                                   # noqa: BLE001
+        return rows
+    if not s or not s.get("brutto"):
+        return rows
+
+    # Bei mehreren Webshop-Filialen alles auf die umsatzstaerkste buchen
+    treffer.sort(key=lambda r: -(r.get("brutto") or 0))
+    haupt = treffer[0]
+    for r in treffer[1:]:
+        for k in ("brutto", "belege", "stueck", "rohertrag", "netto"):
+            if r.get(k):
+                r[k] = 0
+        r["bonwert"] = r["stueckProBeleg"] = None
+        r["marge"] = None
+        r["quelle"] = "shopify"
+
+    rate = haupt.get("marge")            # Margenrate aus dem NEO-Sortiment
+    haupt["brutto"] = s["brutto"]
+    haupt["belege"] = s["belege"] or haupt.get("belege")
+    if s.get("stueck"):
+        haupt["stueck"] = s["stueck"]
+    haupt["bonwert"] = s["bonwert"]
+    haupt["stueckProBeleg"] = s["stueckProBeleg"]
+    haupt["umsatzProTag"] = s["brutto"] / max(1, verkaufstage(q["von"], q["bis"]))
+    k = haupt.get("kassen") or 0
+    haupt["umsatzProKasse"] = (s["brutto"] / k) if k else None
+    haupt["umsatzProKasseTag"] = (haupt["umsatzProTag"] / k) if k else None
+    if rate is not None:
+        haupt["rohertrag"] = s["brutto"] * rate / 100.0
+        haupt["margeGeschaetzt"] = True
+    haupt["quelle"] = "shopify"
+    return rows
 
 
 def q_neuheiten(con, q):

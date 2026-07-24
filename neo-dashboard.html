@@ -705,7 +705,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <h3>Über</h3>
       <div class="info">
         <b>Meister Parfümerie Dashboard</b><br>
-        Version <span id="einstVersion">v2026-07-24.43</span><br>
+        Version <span id="einstVersion">v2026-07-24.45</span><br>
         Datenquelle NEO-WWS über die lokale Zwischenablage <code>neo-cache.db</code>.
       </div>
       <div class="row" style="margin-top:14px">
@@ -869,20 +869,22 @@ body:not(.servermodus) .nur-server{display:none!important}
     </div>
 
     <div class="tabs">
+      <!-- Reihenfolge nach Nutzung: tägliches Geschäft, dann Ertrag und Ware,
+           danach periodische Auswertungen und zuletzt Werkzeuge und Pflege. -->
       <button class="on" data-tab="ueber">Überblick</button>
-      <button data-tab="marge">Marge &amp; Rabatt</button>
-      <button data-tab="kapital">Kapital</button>
-      <button data-tab="marken">Ranking</button>
-      <button data-tab="sortiment">Sortiment</button>
-      <button data-tab="trends">Trends</button>
-      <button data-tab="wochentag">Wochentage</button>
-      <button data-tab="ytd">YTD</button>
-      <button data-tab="filialen">Filialen</button>
-      <button data-tab="bestand">Bestand</button>
-      <button data-tab="suche">Produktsuche</button>
       <button data-tab="onlineshop">Onlineshop</button>
-      <button data-tab="jahr">Jahresgespräch</button>
+      <button data-tab="filialen">Filialen</button>
+      <button data-tab="trends">Trends</button>
+      <button data-tab="marken">Ranking</button>
+      <button data-tab="marge">Marge &amp; Rabatt</button>
+      <button data-tab="bestand">Bestand</button>
       <button data-tab="alerts">Alerts</button>
+      <button data-tab="sortiment">Sortiment</button>
+      <button data-tab="kapital">Kapital</button>
+      <button data-tab="ytd">YTD</button>
+      <button data-tab="wochentag">Wochentage</button>
+      <button data-tab="suche">Produktsuche</button>
+      <button data-tab="jahr">Jahresgespräch</button>
       <button data-tab="daten">Daten</button>
     </div>
 
@@ -1019,7 +1021,7 @@ body:not(.servermodus) .nur-server{display:none!important}
           <th data-k="stueckProBeleg" class="num">Stück/Beleg</th>
           <th data-k="marge" class="num">Marge</th>
         </tr></thead><tbody></tbody></table></div>
-        <div class="hint" style="margin-top:14px">Absolute Umsätze bevorzugen immer die größte Filiale. Umsatz je Kasse und Tag macht Standorte vergleichbar. Der Schnitt lässt Webshop-Filialen außen vor.</div>
+        <div class="hint" style="margin-top:14px" id="fbHinweis">Absolute Umsätze bevorzugen immer die größte Filiale. Umsatz je Kasse und Tag macht Standorte vergleichbar. Der Schnitt lässt Webshop-Filialen außen vor.</div>
       </div>
     </section>
 
@@ -1648,7 +1650,7 @@ function chips(){
   $$('#chips span[data-s]').forEach(e=>e.onclick=()=>{const s=e.dataset.s;$(s).value=s==='#fKanal'?'all':'';refresh()});
 }
 
-const TABS=['ueber','marge','kapital','marken','sortiment','trends','wochentag','ytd','filialen','bestand','suche','onlineshop','jahr','alerts','daten'];
+const TABS=['ueber','onlineshop','filialen','trends','marken','marge','bestand','alerts','sortiment','kapital','ytd','wochentag','suche','jahr','daten'];
 $$('.tabs button').forEach(b=>b.onclick=()=>{
   $$('.tabs button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
   TABS.forEach(t=>$('#t-'+t).classList.toggle('hide',t!==b.dataset.tab)); loadTab(b.dataset.tab)});
@@ -1969,14 +1971,24 @@ $('#sDim').onchange=$('#nTage').onchange=()=>loadSortiment();
 async function loadFilialbenchmark(){
   const d=await raw('/data/filialbenchmark',filters());
   S.last.fb=d.rows;
-  $('#fbInfo').textContent=d.schnittProKasseTag
-    ? `Schnitt ${eur(d.schnittProKasseTag)} je Kasse und Tag über ${d.tage} Tage (ohne Webshop)`:'';
-  table('#tFb',d.rows,r=>[['w',esc(r.dim)],['num',eur(r.brutto)],['num',r.kassen||'—'],
+  $('#fbInfo').textContent=(d.schnittProKasseTag
+    ? `Schnitt ${eur(d.schnittProKasseTag)} je Kasse und Tag über ${d.tage} Tage (ohne Webshop)`:'')
+    +(d.onlineQuelle==='shopify'?' · Onlineshop aus Shopify':'');
+  table('#tFb',d.rows,r=>[
+    ['w',esc(r.dim)+(r.quelle==='shopify'?' <span class="mut">(Shopify)</span>':'')],
+    ['num',eur(r.brutto)],['num',r.kassen||'—'],
     ['num',r.umsatzProKasseTag==null?'—':eur(r.umsatzProKasseTag)],
     ['num '+cls(r.vsSchnitt),pct(r.vsSchnitt)],
     ['num',r.bonwert==null?'—':eur2(r.bonwert)],
     ['num',r.stueckProBeleg==null?'—':nf1.format(r.stueckProBeleg)],
-    ['num',pct0(r.marge)]]);
+    ['num',pct0(r.marge)+(r.margeGeschaetzt?' *':'')]]);
+  $('#fbHinweis').innerHTML='Absolute Umsätze bevorzugen immer die größte Filiale. '
+    +'Umsatz je Kasse und Tag macht Standorte vergleichbar. Der Schnitt lässt Webshop-Filialen außen vor.'
+    +(d.onlineQuelle==='shopify'
+      ? '<br>Die Onlineshop-Zeile kommt aus Shopify: Umsatz, Bestellungen, Stück und Ø Bon sind dort erfasste Werte. '
+        +'Die mit <b>*</b> markierte Marge kennt Shopify nicht — sie ist die Margenrate des Onlinesortiments aus NEO, '
+        +'auf den echten Umsatz hochgerechnet.'
+      : '');
 }
 
 /* ---- Datenlücken, Backup, Report ---- */
