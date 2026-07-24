@@ -332,6 +332,42 @@ def verlauf(von, bis):
     }
 
 
+def umsatz_perioden(von, bis, gran="monat"):
+    """Onlineumsatz je Periode, beschriftet wie die NEO-Zeitreihe.
+
+    gran: 'tag' -> 2026-01-15, 'woche' -> 2026-KW03, 'monat' -> 2026-01
+    So lässt sich die Shopify-Linie direkt in die Filial-Zeitreihe einsetzen.
+    """
+    from datetime import date as _date
+    einheit = {"tag": "day", "woche": "week", "monat": "month"}.get(gran, "month")
+    zeilen = shopifyql("FROM sales SHOW total_sales TIMESERIES %s SINCE %s UNTIL %s"
+                       % (einheit, von, bis))
+
+    def etikett(zeile):
+        roh = ""
+        for k in (einheit, "day", "week", "month", "hour"):
+            if k in zeile:
+                roh = str(zeile[k])[:10]
+                break
+        if not roh:
+            return None
+        if gran == "monat":
+            return roh[:7]
+        if gran == "tag":
+            return roh
+        try:                                   # Woche: gleiche Zählung wie SQLite
+            return _date.fromisoformat(roh).strftime("%Y-KW%W")
+        except ValueError:
+            return roh
+
+    raus = {}
+    for z in zeilen:
+        e = etikett(z)
+        if e:
+            raus[e] = raus.get(e, 0.0) + _z(z.get("total_sales"))
+    return raus
+
+
 def _gruppiert(abfrage, schluesselfeld, wertfelder):
     zeilen = shopifyql(abfrage)
     raus = []

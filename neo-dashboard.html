@@ -705,7 +705,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <h3>Über</h3>
       <div class="info">
         <b>Meister Parfümerie Dashboard</b><br>
-        Version <span id="einstVersion">v2026-07-24.40</span><br>
+        Version <span id="einstVersion">v2026-07-24.43</span><br>
         Datenquelle NEO-WWS über die lokale Zwischenablage <code>neo-cache.db</code>.
       </div>
       <div class="row" style="margin-top:14px">
@@ -874,7 +874,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <button data-tab="kapital">Kapital</button>
       <button data-tab="marken">Ranking</button>
       <button data-tab="sortiment">Sortiment</button>
-      <button data-tab="trends">7/30/90 Trends</button>
+      <button data-tab="trends">Trends</button>
       <button data-tab="wochentag">Wochentage</button>
       <button data-tab="ytd">YTD</button>
       <button data-tab="filialen">Filialen</button>
@@ -883,7 +883,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <button data-tab="onlineshop">Onlineshop</button>
       <button data-tab="jahr">Jahresgespräch</button>
       <button data-tab="alerts">Alerts</button>
-      <button data-tab="daten">Daten &amp; Pflege</button>
+      <button data-tab="daten">Daten</button>
     </div>
 
     <section id="t-ueber">
@@ -915,9 +915,9 @@ body:not(.servermodus) .nur-server{display:none!important}
       <div class="card"><h2>Umsatz nach Filiale im Zeitverlauf <span class="r hint" id="filInfo"></span></h2><canvas id="cFil"></canvas></div>
       <div class="card"><h2>Top-Marken im Zeitverlauf <span class="r hint" id="markenInfo"></span></h2><canvas id="cTopMarken"></canvas></div>
       <div class="two">
-        <div class="card"><h2>Gewinner vs. Vorperiode</h2><div class="scroll sm"><table id="tWin">
+        <div class="card"><h2>Gewinner vs. Vorjahr</h2><div class="scroll sm"><table id="tWin">
           <thead><tr><th>Marke</th><th class="num">Umsatz</th><th class="num">Δ%</th></tr></thead><tbody></tbody></table></div></div>
-        <div class="card"><h2>Verlierer vs. Vorperiode</h2><div class="scroll sm"><table id="tLose">
+        <div class="card"><h2>Verlierer vs. Vorjahr</h2><div class="scroll sm"><table id="tLose">
           <thead><tr><th>Marke</th><th class="num">Umsatz</th><th class="num">Δ%</th></tr></thead><tbody></tbody></table></div></div>
       </div>
     </section>
@@ -1059,7 +1059,7 @@ body:not(.servermodus) .nur-server{display:none!important}
           <th data-k="dim">Name</th><th data-k="brutto" class="num">Umsatz</th>
           <th data-k="anteil" class="num">Anteil</th><th data-k="kumuliert" class="num">Kumuliert</th>
           <th data-k="stueck" class="num">Stück</th>
-          <th data-k="pctVP" class="num">Δ% Vorperiode</th><th data-k="pctVJ" class="num">Δ% Vorjahr</th>
+          <th data-k="pctVJ" class="num">Δ% Vorjahr</th>
         </tr></thead><tbody></tbody></table></div>
         <div class="hint" style="margin-top:14px">Zeile anklicken setzt den Filter. Kumuliert zeigt die ABC-Verteilung. Absolutwerte der Vergleichsperioden stehen im CSV.</div>
       </div>
@@ -1067,6 +1067,16 @@ body:not(.servermodus) .nur-server{display:none!important}
 
     <section id="t-trends" class="hide">
       <div class="card"><h2>Rollierende Fenster <span class="r">
+        <select id="wFenster" style="width:auto">
+          <option value="7">Letzte 7 Tage</option>
+          <option value="14">Letzte 14 Tage</option>
+          <option value="30">Letzte 30 Tage</option>
+          <option value="60">Letzte 60 Tage</option>
+          <option value="90" selected>Letzte 90 Tage</option>
+          <option value="180">Letzte 180 Tage</option>
+          <option value="365">Letzte 365 Tage</option>
+          <option value="730">Letzte 730 Tage</option>
+        </select>
         <select id="wAnsicht" style="width:auto">
           <option value="auto" selected>Automatisch verdichtet</option>
           <option value="glatt">Gleitender Ø 7 Tage</option>
@@ -1077,7 +1087,7 @@ body:not(.servermodus) .nur-server{display:none!important}
           <option value="marke">Marke</option><option value="submarke">Submarke</option>
           <option value="warengruppe">Warengruppe</option><option value="lieferant">Lieferant</option>
         </select></span></h2>
-        <div class="hint">Jedes Fenster endet am Bis-Datum und wird gegen die unmittelbar davorliegende Periode gleicher Länge sowie gegen das Vorjahr verglichen. <b>Kumuliert</b> summiert den Umsatz vom Fensterbeginn auf — der Abstand zwischen den Linien ist der Vorsprung bzw. Rückstand in Euro. <b>Gleitender Ø</b> glättet den Wochenrhythmus heraus.</div>
+        <div class="hint">Das gewählte Fenster endet am Bis-Datum und wird gegen die unmittelbar davorliegende Periode gleicher Länge sowie gegen das Vorjahr verglichen. <b>Kumuliert</b> summiert den Umsatz vom Fensterbeginn auf — der Abstand zwischen den Linien ist der Vorsprung bzw. Rückstand in Euro. <b>Gleitender Ø</b> glättet den Wochenrhythmus heraus.</div>
       </div>
       <div id="wWrap"></div>
     </section>
@@ -1097,9 +1107,9 @@ body:not(.servermodus) .nur-server{display:none!important}
           <th data-k="index" class="num">Index</th><th data-k="anteil" class="num">Anteil</th>
           <th data-k="belegeProTag" class="num">Belege/Tag</th>
           <th data-k="bonwert" class="num">Ø Bon</th>
-          <th data-k="pctVP" class="num">Δ% VP</th><th data-k="pctVJ" class="num">Δ% VJ</th>
+          <th data-k="pctVJ" class="num">Δ% VJ</th>
         </tr></thead><tbody></tbody></table></div>
-        <div class="hint" style="margin-top:14px">Der Index vergleicht den Wochentag mit dem Durchschnitt aller Tage im Zeitraum: 120 heißt 20 % über dem Schnitt. Δ% vergleicht denselben Wochentag mit Vorperiode und Vorjahr, nicht mit anderen Wochentagen.</div>
+        <div class="hint" style="margin-top:14px">Der Index vergleicht den Wochentag mit dem Durchschnitt aller Tage im Zeitraum: 120 heißt 20 % über dem Schnitt. Δ% vergleicht denselben Wochentag mit dem Vorjahr, nicht mit anderen Wochentagen.</div>
       </div>
     </section>
 
@@ -1624,7 +1634,9 @@ $('#btnReset').onclick=()=>{['#fFil','#fMarke','#fSubmarke','#fWg','#fLief'].for
 ['#fFil','#fKanal','#fMarke','#fSubmarke','#fWg','#fLief'].forEach(s=>$(s).onchange=()=>refresh());
 $('#rDim').onchange=()=>loadRanking(); $('#mDim').onchange=()=>loadMarge();
 $('#wDim').onchange=()=>loadWindows();
-$('#wAnsicht').onchange=()=>{const d=S.last.windows; if(d)['7','30','90'].forEach(w=>zeichneFenster(w,d[w]))}; $('#bTage').onchange=$('#bView').onchange=()=>loadBestand();
+$('#wFenster').onchange=()=>loadWindows();
+$('#wAnsicht').onchange=()=>{const d=S.last.windows,w=$('#wFenster').value; if(d&&d[w])zeichneFenster(w,d[w])};
+$('#bTage').onchange=$('#bView').onchange=()=>loadBestand();
 $('#btnAlerts').onclick=()=>loadAlerts(); $('#aSchwere').onchange=()=>loadAlerts();
 
 function chips(){
@@ -1659,9 +1671,8 @@ async function loadTab(t){try{
 async function loadOverview(){
   const f=filters();
   const kpi=await raw('/data/kpi',f), pp=kpi.perioden;
-  const [trend,trendVP,trendVJ,rank,zFil,zMarke,rWg,rYtd]=await Promise.all([
+  const [trend,trendVJ,rank,zFil,zMarke,rWg,rYtd]=await Promise.all([
     raw('/data/trend',f),
-    raw('/data/trend',{...f,von:pp.vorperiode[0],bis:pp.vorperiode[1]}),
     raw('/data/trend',{...f,von:pp.vorjahr[0],bis:pp.vorjahr[1]}),
     raw('/data/ranking',{...f,dim:'marke'}),
     raw('/data/zeitreihe',{...f,dim:'filiale',top:6}),
@@ -1670,39 +1681,42 @@ async function loadOverview(){
     raw('/data/ytd',f)]);
   ringWarengruppen(rWg.rows);
   S.last.kpi=kpi; S.last.rankMarke=rank;
-  S.last.trend={a:trend,p:trendVP,j:trendVJ,perioden:pp};
-  const a=kpi.aktuell,vp=kpi.vorperiode,vj=kpi.vorjahr,d=(c,r)=>r?((c/r-1)*100):null;
-  const bon=a.belege?a.brutto/a.belege:0,bonVP=vp.belege?vp.brutto/vp.belege:0;
-  const K=(l,v,x,y)=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div>
-    <div class="d"><span class="${cls(x)}">VP ${pct(x)}</span><span class="${cls(y)}">VJ ${pct(y)}</span></div></div>`;
+  S.last.trend={a:trend,j:trendVJ,perioden:pp};
+  const a=kpi.aktuell,vj=kpi.vorjahr,d=(c,r)=>r?((c/r-1)*100):null;
+  const bon=a.belege?a.brutto/a.belege:0,bonVJ=vj.belege?vj.brutto/vj.belege:0;
+  // Kachel mit Vorjahresvergleich
+  const K=(l,v,y)=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div>
+    <div class="d">${y==null?'':`<span class="${cls(y)}">VJ ${pct(y)}</span>`}</div></div>`;
   // Kachel, deren großer Wert selbst die Richtung (Farbe + Pfeil) trägt
   const KW=(l,pctWert,unter)=>`<div class="kpi"><div class="v ${cls(pctWert)}">${pct(pctWert)}</div>`
     +`<div class="l">${l}</div><div class="d">${unter||''}</div></div>`;
   const ytdP=rYtd.pct;
   $('#kpis').innerHTML=[
-    K('Bruttoumsatz',eur(a.brutto),d(a.brutto,vp.brutto),d(a.brutto,vj.brutto)),
+    K('Bruttoumsatz',eur(a.brutto),d(a.brutto,vj.brutto)),
     KW('YTD',ytdP,
        `<span class="mut">${eur(rYtd.summeVergleichbar)} vs. ${eur(rYtd.summeVJ)}</span>`),
-    K('Rohertrag',eur(a.rohertrag),d(a.rohertrag,vp.rohertrag),d(a.rohertrag,vj.rohertrag)),
-    K('Belege',nf0.format(a.belege),d(a.belege,vp.belege),d(a.belege,vj.belege)),
-    K('Ø je Tag',eur(a.umsatzProTag),null,null),
-    K('Ø Bonwert',eur2(bon),d(bon,bonVP),null),
-    K('Marge',pct0(a.marge),a.marge&&vp.marge?a.marge-vp.marge:null,a.marge&&vj.marge?a.marge-vj.marge:null),
+    K('Rohertrag',eur(a.rohertrag),d(a.rohertrag,vj.rohertrag)),
+    K('Belege',nf0.format(a.belege),d(a.belege,vj.belege)),
+    K('Ø je Tag',eur(a.umsatzProTag),null),
+    K('Ø Bonwert',eur2(bon),d(bon,bonVJ)),
+    K('Marge',pct0(a.marge),a.marge&&vj.marge?a.marge-vj.marge:null),
   ].join('');
   const p=kpi.perioden;
-  $('#trendInfo').textContent=`${p.aktuell[0]} – ${p.aktuell[1]} (${p.tage} Tage) · Vorperiode `
-    +`${p.vorperiode[0]} – ${p.vorperiode[1]} · Vorjahr ${p.vorjahr[0]} – ${p.vorjahr[1]}`;
+  $('#trendInfo').textContent=`${p.aktuell[0]} – ${p.aktuell[1]} (${p.tage} Tage)`
+    +` · Vorjahr ${p.vorjahr[0]} – ${p.vorjahr[1]}`;
   zeichneTrend();
   const gr=g=>({tag:'Tageswerte',woche:'Wochenwerte',monat:'Monatswerte'}[g]||g);
   linien('cFil',zFil.perioden,zFil.serien);
-  $('#filInfo').textContent=gr(zFil.granularitaet)+(zFil.weitere?` · ${zFil.weitere} weitere Filialen nicht dargestellt`:'');
+  $('#filInfo').textContent=gr(zFil.granularitaet)
+    +(zFil.weitere?` · ${zFil.weitere} weitere Filialen nicht dargestellt`:'')
+    +(zFil.onlineQuelle==='shopify'?' · Onlineshop aus Shopify':'');
   linien('cTopMarken',zMarke.perioden,zMarke.serien);
   $('#markenInfo').textContent=gr(zMarke.granularitaet)+` · Top 6`+(zMarke.weitere?` von ${zMarke.weitere+6} Marken`:'');
-  const rel=rank.rows.filter(r=>r.bruttoVP>0||r.brutto>0);
+  const rel=rank.rows.filter(r=>r.bruttoVJ>0||r.brutto>0);
   const mk=arr=>arr.map(r=>`<tr><td class="w">${esc(r.dim)}</td><td class="num">${eur(r.brutto)}</td>
-    <td class="num ${cls(r.pctVP)}">${pct(r.pctVP)}</td></tr>`).join('');
-  $('#tWin tbody').innerHTML=mk([...rel].sort((x,y)=>y.deltaVP-x.deltaVP).slice(0,10));
-  $('#tLose tbody').innerHTML=mk([...rel].sort((x,y)=>x.deltaVP-y.deltaVP).slice(0,10));
+    <td class="num ${cls(r.pctVJ)}">${pct(r.pctVJ)}</td></tr>`).join('');
+  $('#tWin tbody').innerHTML=mk([...rel].sort((x,y)=>y.deltaVJ-x.deltaVJ).slice(0,10));
+  $('#tLose tbody').innerHTML=mk([...rel].sort((x,y)=>x.deltaVJ-y.deltaVJ).slice(0,10));
 }
 
 /* Ringdiagramm Warengruppen. Mehr als sieben Segmente sind nicht mehr
@@ -1752,10 +1766,10 @@ function ringWarengruppen(rows){
     r=>{$('#fWg').value=r.dim;refresh()});
 }
 
-/* Übersichts-Verlauf — gleiche Logik wie die 7/30/90-Fenster:
+/* Übersichts-Verlauf — gleiche Logik wie die rollierenden Fenster:
    kumuliert glättet den Wochenrhythmus vollständig heraus. */
 /* Tageswerte zu Blöcken gleicher Länge zusammenfassen. Positionsbezogen,
-   damit Vorperiode und Vorjahr deckungsgleich vergleichbar bleiben. */
+   damit das Vorjahr deckungsgleich vergleichbar bleibt. */
 function verdichten(werte,groesse){
   if(groesse<=1) return werte;
   const out=[];
@@ -1783,7 +1797,7 @@ function zeichneTrend(){
     if(ansicht==='auto') return verdichten(v,bl);
     return v;
   };
-  const A=auf(brutto(T.a)), P=auf(fit(T.p)), J=auf(fit(T.j));
+  const A=auf(brutto(T.a)), J=auf(fit(T.j));
   if(ansicht==='auto'&&bl>1){
     const d2=[]; for(let i=0;i<dat.length;i+=bl) d2.push(dat[i]); dat=d2;
   }
@@ -1798,8 +1812,6 @@ function zeichneTrend(){
     {label:'Aktuell'+einheit,data:A,borderColor:CF().akz,backgroundColor:flaeche,fill:true,
      tension:ansicht==='auto'?.2:.35,pointRadius:dicht?0:3.5,pointHoverRadius:6,
      borderWidth:2.5,pointStyle:'circle'},
-    {label:'Vorperiode',data:P,borderColor:CF().tick,borderDash:[6,4],
-     tension:ansicht==='auto'?.2:.35,pointRadius:0,pointHoverRadius:5,fill:false,borderWidth:1.75},
     {label:'Vorjahr',data:J,borderColor:CF().vj,borderDash:[2,4],
      tension:ansicht==='auto'?.2:.35,pointRadius:0,pointHoverRadius:5,fill:false,borderWidth:1.75},
   ],{interaction:{mode:'index',intersect:false},
@@ -1815,7 +1827,7 @@ function zeichneTrend(){
            label:c=>' '+c.dataset.label+': '+eur(c.parsed.y),
            afterBody:it=>{const a=it[0]&&it[0].parsed.y,v=it[1]&&it[1].parsed.y;
              if(a==null||!v)return ''; const q=(a/v-1)*100;
-             return '\nggü. Vorperiode: '+(q>=0?'+':'')+nf1.format(q)+' %'}}}},
+             return '\nggü. Vorjahr: '+(q>=0?'+':'')+nf1.format(q)+' %'}}}},
      scales:{x:{title:ansicht==='kum'?{display:true,text:'Tag in der Periode',color:CF().tick,
                   font:{family:'Inter,sans-serif',size:11}}:{display:false},
                 ticks:{color:CF().tick,autoSkip:true,maxTicksLimit:12,
@@ -1828,10 +1840,10 @@ function zeichneTrend(){
 
   const el=$('#trendFazit');
   if(ansicht==='kum'){
-    const eA=A[A.length-1]||0, eP=P.filter(x=>x!=null).pop()||0;
-    if(eP){const diff=eA-eP,q=(eA/eP-1)*100;
+    const eA=A[A.length-1]||0, eJ=J.filter(x=>x!=null).pop()||0;
+    if(eJ){const diff=eA-eJ,q=(eA/eJ-1)*100;
       el.innerHTML=(diff>=0?'<b class="up">'+eur(diff)+' Vorsprung</b>':'<b class="down">'+eur(-diff)+' Rückstand</b>')
-        +` gegenüber der Vorperiode (${(q>=0?'+':'')+nf1.format(q)} %). Der Abstand zwischen den Linien ist der Unterschied in Euro.`;
+        +` gegenüber dem Vorjahr (${(q>=0?'+':'')+nf1.format(q)} %). Der Abstand zwischen den Linien ist der Unterschied in Euro.`;
     } else el.textContent='Aufsummiert vom Beginn der Periode.';
   } else if(ansicht==='auto'){
     // Höchster und niedrigster Block benennen, damit man die Ausschläge einordnen kann
@@ -1857,11 +1869,11 @@ $('#tAnsicht').onchange=()=>zeichneTrend();
 async function loadMarge(){
   const f=filters(),dim=$('#mDim').value;
   const [kpi,d]=await Promise.all([raw('/data/kpi',f),raw('/data/ranking',{...f,dim})]);
-  const a=kpi.aktuell,vp=kpi.vorperiode,vj=kpi.vorjahr;
+  const a=kpi.aktuell,vj=kpi.vorjahr;
   $('#mKpis').innerHTML=[
     ['Nettoumsatz',eur(a.netto)],['Wareneinsatz',eur(a.wareneinsatz)],
     ['Rohertrag',eur(a.rohertrag)],['Marge',pct0(a.marge)],
-    ['Marge Vorperiode',pct0(vp.marge)],['Marge Vorjahr',pct0(vj.marge)],
+    ['Marge Vorjahr',pct0(vj.marge)],
     ['Marge ohne Rabatt',pct0(a.margeOhneRabatt)],
     ['Margenverlust durch Rabatt',a.margenverlust==null?'—':nf1.format(a.margenverlust)+' Pkt.'],
     ['Rabattwert',eur(a.rabattwert)],['Rabattquote',pct0(a.rabattquote)],
@@ -2027,16 +2039,17 @@ async function loadRanking(){
     +` · Top 6 nach Umsatz`+(z.weitere?` von ${z.weitere+6}`:'');
   table('#tRank',d.rows,r=>[['w',esc(r.dim)],['num',eur(r.brutto)],['num',nf1.format(r.anteil)+' %'],
     ['num',nf1.format(r.kumuliert)+' %'],['num',nf0.format(r.stueck)],
-    ['num '+cls(r.pctVP),pct(r.pctVP)],['num '+cls(r.pctVJ),pct(r.pctVJ)]],
+    ['num '+cls(r.pctVJ),pct(r.pctVJ)]],
     r=>{const s={marke:'#fMarke',submarke:'#fSubmarke',warengruppe:'#fWg',lieferant:'#fLief'}[dim];
       if(s){$(s).value=r.dim;refresh()}});
 }
 
 /* ---- Fenster ---- */
 async function loadWindows(){
-  const dim=$('#wDim').value,d=await raw('/data/windows',{...filters(),dim});
+  const dim=$('#wDim').value, fenster=$('#wFenster').value;
+  const d=await raw('/data/windows',{...filters(),dim,fenster});
   S.last.windows=d;
-  $('#wWrap').innerHTML=['7','30','90'].map(w=>{
+  $('#wWrap').innerHTML=[fenster].map(w=>{
     const b=d[w],rows=b.rows,ges=rows.reduce((s,r)=>s+(r.cur||0),0);
     const up=[...rows].filter(r=>r.prev>0).sort((x,y)=>(y.pct??-1e9)-(x.pct??-1e9)).slice(0,8);
     const dn=[...rows].filter(r=>r.prev>0).sort((x,y)=>(x.pct??1e9)-(y.pct??1e9)).slice(0,8);
@@ -2064,8 +2077,8 @@ async function loadWindows(){
       <div><div class="mini">Stärkster Rückgang</div><div class="scroll sm"><table>${H}<tbody>${mk(dn)}</tbody></table></div></div></div>
       ${wtHtml}</div>`;
   }).join('');
-  // Charts erst nach dem Einhängen der Canvas-Elemente zeichnen
-  ['7','30','90'].forEach(w=>zeichneFenster(w,d[w]));
+  // Chart erst nach dem Einhängen des Canvas-Elements zeichnen
+  zeichneFenster(fenster,d[fenster]);
 }
 
 function zeichneFenster(w,b){
@@ -2185,7 +2198,7 @@ async function loadWochentag(){
     ['num',nf1.format(x.anteil)+' %'],
     ['num',x.belegeProTag==null?'—':nf0.format(x.belegeProTag)],
     ['num',x.bonwert==null?'—':eur2(x.bonwert)],
-    ['num '+cls(x.pctVP),pct(x.pctVP)],['num '+cls(x.pctVJ),pct(x.pctVJ)]]);
+    ['num '+cls(x.pctVJ),pct(x.pctVJ)]]);
 }
 
 /* ---- YTD ---- */
@@ -2380,7 +2393,7 @@ async function artikelDetail(nr){
   const d=await raw('/data/artikel',{artikelNr:nr,von:f.von,bis:f.bis});
   if(!d.gefunden){msg('#sMsg','Artikel '+nr+' nicht im Cache.','err');return}
   $('#sDetail').classList.remove('hide');
-  const s=d.stamm,a=d.aktuell,vp=d.vorperiode,vj=d.vorjahr;
+  const s=d.stamm,a=d.aktuell,vj=d.vorjahr;
   $('#sTitel').textContent=s.artikelNr+' – '+(s.bezeichnung||'');
   $('#sStamm').innerHTML=[
     ['Marke',s.marke],['Submarke',s.submarke],['Linie',s.linie],['Warengruppe',s.warengruppe],
@@ -2389,12 +2402,12 @@ async function artikelDetail(nr){
     ['VK',s.vkPreis?eur2(s.vkPreis):null],
   ].filter(x=>x[1]).map(([l,v])=>`<b>${l}:</b> ${esc(v)}`).join(' &nbsp;·&nbsp; ');
   const d_=(c,r)=>r?((c/r-1)*100):null;
-  const K=(l,v,x,y)=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div>`
-    +(x!==undefined?`<div class="d"><span class="${cls(x)}">VP ${pct(x)}</span><span class="${cls(y)}">VJ ${pct(y)}</span></div>`:'')+`</div>`;
+  const K=(l,v,y)=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div>`
+    +(y!==undefined?`<div class="d"><span class="${cls(y)}">VJ ${pct(y)}</span></div>`:'')+`</div>`;
   $('#sKpis').innerHTML=[
-    K('Umsatz',eur(a.brutto),d_(a.brutto,vp.brutto),d_(a.brutto,vj.brutto)),
-    K('Stück',nf0.format(a.stueck),d_(a.stueck,vp.stueck),d_(a.stueck,vj.stueck)),
-    K('Rohertrag',eur(a.rohertrag),d_(a.rohertrag,vp.rohertrag),d_(a.rohertrag,vj.rohertrag)),
+    K('Umsatz',eur(a.brutto),d_(a.brutto,vj.brutto)),
+    K('Stück',nf0.format(a.stueck),d_(a.stueck,vj.stueck)),
+    K('Rohertrag',eur(a.rohertrag),d_(a.rohertrag,vj.rohertrag)),
     K('Marge',pct0(a.marge)),
     K('Bestand',nf0.format(d.bestandGesamt)),
     K('Reichweite',d.reichweite==null?'—':nf0.format(d.reichweite)+' Tage'),

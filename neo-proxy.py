@@ -637,6 +637,62 @@ def q_zeitreihe(con, q):
             "weitere": max(0, len(summen) - len(namen))}
 
 
+ONLINE_NAMEN = ("onlineshop", "online-shop", "online shop", "webshop",
+                "web-shop", "online", "shopify")
+
+
+def ist_onlinefiliale(name):
+    n = (name or "").strip().lower()
+    return any(k in n for k in ONLINE_NAMEN)
+
+
+def shopify_onlinelinie(res, q):
+    """Ersetzt in der Filial-Zeitreihe die Onlineshop-Linie durch die Zahlen
+    aus Shopify.
+
+    Die NEO-Warenwirtschaft fuehrt den Webshop zwar als Filiale, liefert dort
+    aber unvollstaendige Werte. Stationaere Filialen bleiben unveraendert aus
+    NEO. Faellt Shopify aus, bleibt einfach alles wie es war."""
+    if neo_shopify is None or not neo_shopify.konfiguriert():
+        return res
+    if q.get("dim", "filiale") != "filiale":
+        return res
+    if res.get("metrik", "brutto") != "brutto":
+        return res          # Rohertrag/Marge liefert Shopify so nicht
+    treffer = [s for s in res.get("serien", []) if ist_onlinefiliale(s.get("dim"))]
+    if not treffer:
+        return res
+    try:
+        je_periode = neo_shopify.umsatz_perioden(
+            q["von"], q["bis"], res.get("granularitaet", "monat"))
+    except Exception:                                    # noqa: BLE001
+        return res                                       # lieber NEO als nichts
+    if not je_periode:
+        return res
+
+    perioden = res.get("perioden", [])
+    gesamt = res.get("gesamt") or []
+    passt = len(gesamt) == len(perioden)
+
+    for s in treffer:
+        alt = list(s.get("werte") or [])
+        neu = [je_periode.get(p) for p in perioden]
+        s["werte"] = neu
+        s["summe"] = sum(v for v in neu if v)
+        s["quelle"] = "shopify"
+        # Gesamtlinie nur um die Differenz verschieben, damit Filialen
+        # ausserhalb der Top-Auswahl erhalten bleiben.
+        if passt:
+            for i in range(len(perioden)):
+                a = alt[i] if i < len(alt) and alt[i] else 0
+                n = neu[i] or 0
+                gesamt[i] = (gesamt[i] or 0) - a + n
+    if passt:
+        res["gesamt"] = gesamt
+    res["onlineQuelle"] = "shopify"
+    return res
+
+
 def q_ranking(con, q):
     """Ranking einer Dimension inkl. Vergleich zu Vorperiode und Vorjahr."""
     dim = q.get("dim", "marke")
@@ -696,19 +752,42 @@ def q_ranking(con, q):
     return {"rows": rows, "perioden": {"aktuell": cur, "vorperiode": vp, "vorjahr": vj}}
 
 
+def _vorjahr(d):
+    """Gleiches Datum ein Jahr frueher. Faengt den 29. Februar ab."""
+    try:
+        return d.replace(year=d.year - 1)
+    except ValueError:                      # 29.02. gibt es im Vorjahr nicht
+        return d.replace(year=d.year - 1, day=28)
+
+
 def q_windows(con, q):
-    """7 / 30 / 90 Tage jeweils gegen die direkt davorliegende Periode."""
+    """Rollierende Fenster, jeweils gegen die direkt davorliegende Periode
+    und gegen das Vorjahr.
+
+    Ueber den Parameter 'fenster' laesst sich die Laenge frei waehlen
+    (z. B. fenster=90 oder fenster=7,30,90). Ohne Angabe: 7, 30 und 90 Tage."""
     dim = q.get("dim", "marke")
     expr = DIMS.get(dim, DIMS["marke"])
     cond, args = where_clause(q)
     extra = (" AND " + " AND ".join(cond)) if cond else ""
     ende = date.fromisoformat(q.get("bis") or date.today().isoformat())
 
+    fenster = []
+    for teil in str(q.get("fenster") or "7,30,90").split(","):
+        teil = teil.strip()
+        if not teil.isdigit():
+            continue
+        n = int(teil)
+        if 1 <= n <= 1095 and n not in fenster:      # bis zu drei Jahre
+            fenster.append(n)
+    if not fenster:
+        fenster = [7, 30, 90]
+
     out = {}
-    for w in (7, 30, 90):
+    for w in fenster:
         c0, c1 = ende - timedelta(days=w - 1), ende
         p0, p1 = c0 - timedelta(days=w), c0 - timedelta(days=1)
-        y0, y1 = c0.replace(year=c0.year - 1), c1.replace(year=c1.year - 1)
+        y0, y1 = _vorjahr(c0), _vorjahr(c1)
         sql = """
         SELECT {expr} AS dim,
           SUM(CASE WHEN u.datum BETWEEN ? AND ? THEN u.bruttoMitRabatt ELSE 0 END) AS cur,
@@ -2740,7 +2819,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if name == "trend":
                 return self.json_out(200, q_trend(con, q))
             if name == "zeitreihe":
-                return self.json_out(200, q_zeitreihe(con, q))
+                return self.json_out(200, shopify_onlinelinie(q_zeitreihe(con, q), q))
             if name == "ranking":
                 return self.json_out(200, q_ranking(con, q))
             if name == "windows":
