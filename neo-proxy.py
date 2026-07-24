@@ -51,6 +51,11 @@ try:
 except Exception:              # noqa: BLE001
     neo_auth = None
 
+try:
+    import neo_shopify         # Onlineshop-Kennzahlen direkt aus Shopify
+except Exception:              # noqa: BLE001
+    neo_shopify = None
+
 DEFAULT_TARGET = "https://portal.neo-wws.de/neo-server-prod"
 HERE = Path(__file__).resolve().parent
 DASHBOARD = HERE / "neo-dashboard.html"
@@ -2564,6 +2569,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         return False
 
+    def shopify_uebersicht(self, q):
+        """Onlineshop-Kennzahlen direkt aus Shopify (unabhängig von NEO)."""
+        if neo_shopify is None:
+            return self.json_out(501, {"error": "Modul neo_shopify.py fehlt neben neo-proxy.py.",
+                                       "shopify": False})
+        if not neo_shopify.konfiguriert():
+            return self.json_out(200, {
+                "verbunden": False,
+                "hinweis": "Shopify ist noch nicht verbunden. Hinterlege SHOPIFY_SHOP "
+                           "und SHOPIFY_TOKEN in den Servereinstellungen."})
+        bis = q.get("bis") or date.today().isoformat()
+        von = q.get("von") or (date.fromisoformat(bis) - timedelta(days=29)).isoformat()
+        try:
+            daten = neo_shopify.uebersicht(von, bis, frisch=(q.get("frisch") == "1"))
+            daten["verbunden"] = True
+            return self.json_out(200, daten)
+        except neo_shopify.ShopifyFehler as e:
+            return self.json_out(502, {"error": str(e), "verbunden": True})
+
     def _geschuetzt(self, p):
         """Pfade, die im Auth-Modus eine Anmeldung erfordern."""
         if not CFG["auth"]:
@@ -2636,6 +2660,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self.json_out(200, wochenreport(con, q.get("ordner"), q.get("bis")))
                 finally:
                     con.close()
+            if p == "/data/shopify":
+                return self.shopify_uebersicht(q)
             if p.startswith("/data/"):
                 return self.data(p[len("/data/"):], q)
             return self.serve_static(p)

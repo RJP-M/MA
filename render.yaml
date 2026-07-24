@@ -50,3 +50,9 @@ services:
         sync: false
       - key: ADMIN_PASS
         sync: false
+
+      # Shopify-Onlineshop (für den Tab „Onlineshop")
+      - key: SHOPIFY_SHOP
+        sync: false
+      - key: SHOPIFY_TOKEN
+        sync: false

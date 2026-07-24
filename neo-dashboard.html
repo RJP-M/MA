@@ -705,7 +705,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <h3>Über</h3>
       <div class="info">
         <b>Meister Parfümerie Dashboard</b><br>
-        Version <span id="einstVersion">v2026-07-21.39</span><br>
+        Version <span id="einstVersion">v2026-07-24.40</span><br>
         Datenquelle NEO-WWS über die lokale Zwischenablage <code>neo-cache.db</code>.
       </div>
       <div class="row" style="margin-top:14px">
@@ -880,6 +880,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <button data-tab="filialen">Filialen</button>
       <button data-tab="bestand">Bestand</button>
       <button data-tab="suche">Produktsuche</button>
+      <button data-tab="onlineshop">Onlineshop</button>
       <button data-tab="jahr">Jahresgespräch</button>
       <button data-tab="alerts">Alerts</button>
       <button data-tab="daten">Daten &amp; Pflege</button>
@@ -1176,6 +1177,64 @@ body:not(.servermodus) .nur-server{display:none!important}
         <div class="msg" id="jMsg"></div>
       </div>
       <div id="jBericht"></div>
+    </section>
+
+    <section id="t-onlineshop" class="hide">
+      <div class="card">
+        <h2>Onlineshop <span class="r">
+          <span class="hint" id="shopStand"></span>
+          <button class="ghost sm" id="btnShopNeu">Aktualisieren</button></span></h2>
+        <div class="hint">Zahlen kommen direkt aus Shopify — unabhängig von der NEO-Warenwirtschaft.
+          Sie folgen dem Zeitraum aus dem Filter oben.</div>
+        <div class="msg" id="shopMsg"></div>
+      </div>
+
+      <div class="kpis" id="shopKpis"></div>
+
+      <div class="card">
+        <h2>Umsatz und Besucher im Zeitverlauf <span class="r hint" id="shopVerlaufInfo"></span></h2>
+        <canvas id="cShopVerlauf"></canvas>
+      </div>
+
+      <div class="two">
+        <div class="card">
+          <h2>Vom Besuch zum Kauf</h2>
+          <div id="shopTrichter"></div>
+        </div>
+        <div class="card">
+          <h2>Liegengebliebene Warenkörbe</h2>
+          <div id="shopWarenkorb"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Abgebrochene Checkouts im Detail</h2>
+        <div class="scroll"><table id="tShopAbbruch"><thead><tr>
+          <th>Datum</th><th>Warenwert</th><th>Artikel</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+
+      <div class="card">
+        <h2>Meistverkaufte Produkte online</h2>
+        <div class="scroll"><table id="tShopProdukte"><thead><tr>
+          <th>Produkt</th><th>Umsatz</th><th>Bestellungen</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+
+      <div class="two">
+        <div class="card">
+          <h2>Woher die Bestellungen kommen</h2>
+          <div class="scroll"><table id="tShopHerkunft"><thead><tr>
+            <th>Quelle</th><th>Umsatz</th><th>Bestellungen</th>
+          </tr></thead><tbody></tbody></table></div>
+        </div>
+        <div class="card">
+          <h2>Geräte und Länder</h2>
+          <div class="scroll"><table id="tShopGeraete"><thead><tr>
+            <th>Merkmal</th><th>Besuche</th><th>Anteil</th>
+          </tr></thead><tbody></tbody></table></div>
+        </div>
+      </div>
     </section>
 
     <section id="t-alerts" class="hide">
@@ -1577,7 +1636,7 @@ function chips(){
   $$('#chips span[data-s]').forEach(e=>e.onclick=()=>{const s=e.dataset.s;$(s).value=s==='#fKanal'?'all':'';refresh()});
 }
 
-const TABS=['ueber','marge','kapital','marken','sortiment','trends','wochentag','ytd','filialen','bestand','suche','jahr','alerts','daten'];
+const TABS=['ueber','marge','kapital','marken','sortiment','trends','wochentag','ytd','filialen','bestand','suche','onlineshop','jahr','alerts','daten'];
 $$('.tabs button').forEach(b=>b.onclick=()=>{
   $$('.tabs button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
   TABS.forEach(t=>$('#t-'+t).classList.toggle('hide',t!==b.dataset.tab)); loadTab(b.dataset.tab)});
@@ -1591,6 +1650,7 @@ async function loadTab(t){try{
   else if(t==='ytd')await loadYtd();
   else if(t==='filialen')await loadFilialbenchmark();
   else if(t==='bestand')await loadBestand(); else if(t==='alerts')await loadAlerts();
+  else if(t==='onlineshop')await loadShopify();
   else if(t==='jahr')await loadJahr();
   else if(t==='daten')await loadLuecken();
 }catch(e){msg('#fMsg',e.message,'err')}}
@@ -2167,6 +2227,106 @@ async function loadBestand(){
     ['w',esc(r.marke)],['',esc(r.filiale)],['num',nf0.format(r.bestand)],['num',nf0.format(r.abverkauf)],
     ['num',r.reichweite==null?'—':(r.reichweite>999?'>999':nf0.format(r.reichweite)+' T')],['',pill(r.status)]]);
 }
+
+/* ---- Onlineshop (Shopify) ---- */
+function shopLeeren(){
+  $('#shopKpis').innerHTML=''; $('#shopTrichter').innerHTML=''; $('#shopWarenkorb').innerHTML='';
+  ['#tShopAbbruch','#tShopProdukte','#tShopHerkunft','#tShopGeraete']
+    .forEach(s=>{const tb=$(s+' tbody'); if(tb) tb.innerHTML='';});
+  if(S.charts['cShopVerlauf']){S.charts['cShopVerlauf'].destroy();delete S.charts['cShopVerlauf'];}
+  $('#shopVerlaufInfo').textContent='';
+}
+async function loadShopify(frisch){
+  const f=filters();
+  msg('#shopMsg','Hole Zahlen von Shopify…','info');
+  let d;
+  try{ d=await raw('/data/shopify',{von:f.von,bis:f.bis,frisch:frisch?1:''}); }
+  catch(e){ shopLeeren(); msg('#shopMsg',e.message,'err'); return; }
+  if(!d.verbunden){ shopLeeren(); msg('#shopMsg',d.hinweis||'Shopify ist noch nicht verbunden.','info'); return; }
+  msg('#shopMsg','');
+  S.last.shopify=d;
+  $('#shopStand').textContent = d.abgerufen ? ('Stand '+d.abgerufen.replace('T',' ')) : '';
+
+  // Kennzahlen
+  const k=d.kennzahlen, t=d.trichter, w=d.warenkoerbe, ku=d.kunden;
+  const KS=(l,v,unter)=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div>`
+    +`<div class="d">${unter||''}</div></div>`;
+  const m=s=>`<span class="mut">${s}</span>`;
+  $('#shopKpis').innerHTML=[
+    KS('Onlineumsatz',eur(k.gesamtUmsatz),m(`${nf0.format(k.bestellungen)} Bestellungen`)),
+    KS('Ø Bestellwert',eur2(k.bonwert),m(`Rabatte ${eur(k.rabatte)}`)),
+    KS('Besucher',nf0.format(t.besucher),m(`${nf0.format(t.besuche)} Besuche`)),
+    KS('Conversion',nf1.format(t.conversion)+' %',m(`${nf0.format(t.gekauft)} Käufe`)),
+    KS('Liegengeblieben',eur(w.wert),m(`${nf0.format(w.anzahl)} Warenkörbe`)),
+    KS('Retouren',eur(k.retouren),m(`Netto ${eur(k.nettoUmsatz)}`)),
+    KS('Stammkundenquote',nf1.format(ku.stammkundenQuote)+' %',m(`${nf0.format(ku.neukunden)} neue Kunden`)),
+  ].join('');
+
+  // Verlauf: Umsatz + Besuche (zwei Achsen)
+  const v=d.verlauf;
+  $('#shopVerlaufInfo').textContent=v.granularitaet||'';
+  if(v.perioden.length){
+    chart('cShopVerlauf','line',v.perioden,[
+      {label:'Umsatz',data:v.umsatz,borderColor:PALETTE_()[0],backgroundColor:PALETTE_()[0],
+       yAxisID:'y',tension:.35,borderWidth:2,pointRadius:v.perioden.length>45?0:3,fill:false},
+      {label:'Besuche',data:v.besuche,borderColor:PALETTE_()[1],backgroundColor:PALETTE_()[1],
+       yAxisID:'y2',tension:.35,borderWidth:2,pointRadius:v.perioden.length>45?0:3,fill:false}
+    ],{interaction:{mode:'index',intersect:false},
+       plugins:{legend:{labels:{usePointStyle:true,pointStyle:'circle',boxWidth:8,padding:16}}},
+       scales:{y:{position:'left',ticks:{callback:x=>kompakt(x)}},
+               y2:{position:'right',grid:{drawOnChartArea:false},ticks:{callback:x=>kompakt(x)}}}});
+  }
+
+  // Trichter Besuch -> Warenkorb -> Checkout -> Kauf
+  const stufe=(label,wert,quote,hinweis)=>{
+    const breite=t.besuche?Math.max(2,(wert/t.besuche)*100):0;
+    return `<div style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">
+        <b>${label}</b><span>${nf0.format(wert)}${quote!=null?` · ${nf1.format(quote)} %`:''}</span></div>
+      <div style="height:12px;border-radius:6px;background:var(--card-2);overflow:hidden">
+        <div style="height:100%;width:${breite}%;background:var(--acc);border-radius:6px"></div></div>
+      ${hinweis?`<div class="hint" style="margin-top:4px">${hinweis}</div>`:''}</div>`;
+  };
+  $('#shopTrichter').innerHTML=
+    stufe('Besuche',t.besuche,null)
+    +stufe('Etwas in den Warenkorb gelegt',t.mitWarenkorb,t.warenkorbQuote,
+           `${nf0.format(t.besuche-t.mitWarenkorb)} Besuche ohne Warenkorb`)
+    +stufe('Checkout begonnen',t.imCheckout,t.checkoutQuote,
+           `${nf0.format(t.abbruchWarenkorb)} mit Warenkorb, aber ohne Checkout`)
+    +stufe('Gekauft',t.gekauft,t.kaufQuote,
+           `${nf0.format(t.abbruchCheckout)} haben den Checkout abgebrochen`);
+
+  // Liegengebliebene Warenkörbe
+  $('#shopWarenkorb').innerHTML=`
+    <div class="info" style="margin-bottom:12px">
+      <b>${eur(w.wert)}</b> liegen in ${nf0.format(w.anzahl)} nicht abgeschlossenen Warenkörben.<br>
+      Ø ${eur2(w.durchschnitt)} je Warenkorb${w.anteilAmUmsatz!=null
+        ? ` · entspricht ${nf1.format(w.anteilAmUmsatz)} % des Onlineumsatzes` : ''}.
+    </div>
+    <div class="hint">${t.abbruchCheckoutQuote!=null
+      ? `${nf1.format(t.abbruchCheckoutQuote)} % derer, die den Checkout starten, brechen wieder ab.` : ''}
+      Eine Erinnerungsmail an diese Kunden ist erfahrungsgemäß der schnellste Hebel.</div>
+    ${w.hinweis?`<div class="hint" style="margin-top:8px">${esc(w.hinweis)}</div>`:''}`;
+
+  table('#tShopAbbruch',w.liste||[],r=>[
+    ['',esc(r.datum)],['num',eur2(r.wert)],['',esc((r.artikel||[]).join(', '))||'—']]);
+  table('#tShopProdukte',d.topProdukte||[],r=>[
+    ['w',esc(r.name)],['num',eur(r.umsatz)],['num',nf0.format(r.bestellungen)]]);
+  table('#tShopHerkunft',d.herkunft||[],r=>[
+    ['w',esc(r.name)],['num',eur(r.umsatz)],['num',nf0.format(r.bestellungen)]]);
+
+  // Geräte und Länder in einer Tabelle, mit Anteil
+  const ger=(d.geraete||[]).map(r=>({...r,gruppe:'Gerät'}));
+  const lan=(d.laender||[]).map(r=>({...r,gruppe:'Land'}));
+  const summe=g=>g.reduce((s,r)=>s+(r.besuche||0),0)||1;
+  const sG=summe(ger), sL=summe(lan);
+  const zeilen=[...ger.map(r=>({...r,anteil:(r.besuche/sG)*100})),
+                ...lan.map(r=>({...r,anteil:(r.besuche/sL)*100}))];
+  table('#tShopGeraete',zeilen,r=>[
+    ['w',`${esc(r.name)} <span class="mut">(${r.gruppe})</span>`],
+    ['num',nf0.format(r.besuche)],['num',nf1.format(r.anteil)+' %']]);
+}
+$('#btnShopNeu').onclick=()=>loadShopify(true);
 
 /* ---- Alerts ---- */
 async function loadAlerts(){
