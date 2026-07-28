@@ -717,7 +717,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <h3>Über</h3>
       <div class="info">
         <b>Meister Parfümerie Dashboard</b><br>
-        Version <span id="einstVersion">v2026-07-28.56</span><br>
+        Version <span id="einstVersion">v2026-07-28.57</span><br>
         Datenquelle NEO-WWS über die lokale Zwischenablage <code>neo-cache.db</code>.
       </div>
       <div class="row" style="margin-top:14px">
@@ -890,11 +890,11 @@ body:not(.servermodus) .nur-server{display:none!important}
       <button data-tab="filialen">Filialen</button>
       <button data-tab="marken">Ranking</button>
       <button data-tab="markenmonat">Marken je Monat</button>
+      <button data-tab="penner">Pennerartikel</button>
       <!-- Alles Weitere liegt hinter „Mehr“, damit die Leiste im Alltag schmal bleibt -->
       <button class="mehrTab" data-tab="trends" hidden>Trends</button>
       <button class="mehrTab" data-tab="marge" hidden>Marge &amp; Rabatt</button>
       <button class="mehrTab" data-tab="bestand" hidden>Bestand</button>
-      <button class="mehrTab" data-tab="penner" hidden>Pennerartikel</button>
       <button class="mehrTab" data-tab="alerts" hidden>Alerts</button>
       <button class="mehrTab" data-tab="sortiment" hidden>Sortiment</button>
       <button class="mehrTab" data-tab="kapital" hidden>Kapital</button>
@@ -2608,10 +2608,26 @@ async function loadMarkenMonat(){
 
   const wert=$('#mmWert').value;
   const serien=d.serien.slice(0,8).map(s=>({dim:s.dim,werte:wert==='umsatz'?s.umsatz:s.werte}));
+  const wenige=d.perioden.length<=3;   // ein einzelner Monat als Linie sieht albern aus
   $('#mmChartInfo').textContent=(wert==='umsatz'?'Umsatz':'Verkaufte Stück')+' je Monat'
     +(d.serien.length>8?` · Top 8 von ${d.serien.length} Marken`:'');
-  if(d.perioden.length) linien('cMmVerlauf',d.perioden,serien,
-    {scales:{y:{ticks:{callback:v=>wert==='umsatz'?kompakt(v):nf0.format(v)}}}});
+  // Achse: bei Stückzahlen ganze Zahlen, sonst gäbe es bei kleinen Werten
+  // mehrfach dieselbe Beschriftung
+  const yAchse={beginAtZero:true,
+    ticks:{precision:wert==='umsatz'?undefined:0,
+           callback:v=>wert==='umsatz'?kompakt(v):nf0.format(v)}};
+  if(!d.perioden.length){
+    if(S.charts['cMmVerlauf']){S.charts['cMmVerlauf'].destroy();delete S.charts['cMmVerlauf'];}
+  } else if(wenige){
+    chart('cMmVerlauf','bar',d.perioden,serien.map((s,i)=>({
+      label:s.dim,data:s.werte,
+      backgroundColor:PALETTE_()[i%PALETTE_().length],borderRadius:5,
+      maxBarThickness:90})),
+      {plugins:{legend:{labels:{usePointStyle:true,pointStyle:'circle',boxWidth:8,padding:16}}},
+       scales:{y:yAchse}});
+  } else {
+    linien('cMmVerlauf',d.perioden,serien,{scales:{y:yAchse}});
+  }
 
   table('#tMmMonate',d.monate,r=>[
     ['w',r.monat],['num',nf0.format(r.stueck)],
