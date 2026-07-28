@@ -717,7 +717,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <h3>Über</h3>
       <div class="info">
         <b>Meister Parfümerie Dashboard</b><br>
-        Version <span id="einstVersion">v2026-07-28.53</span><br>
+        Version <span id="einstVersion">v2026-07-28.54</span><br>
         Datenquelle NEO-WWS über die lokale Zwischenablage <code>neo-cache.db</code>.
       </div>
       <div class="row" style="margin-top:14px">
@@ -880,7 +880,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <div class="msg" id="fMsg"></div>
     </div>
 
-    <div class="msg err" id="versionWarnung" hidden style="display:block;margin-bottom:14px"></div>
+    <div class="msg err hide" id="versionWarnung" style="margin-bottom:14px"></div>
 
     <div class="tabs">
       <!-- Reihenfolge nach Nutzung: tägliches Geschäft, dann Ertrag und Ware,
@@ -1731,12 +1731,13 @@ $('#btnSync').onclick=async()=>{
 // Fassung, die dieses Dashboard vom Server erwartet. Stimmen die beiden nicht
 // überein, wurde beim Hochladen eine der Dateien vergessen — das ist die
 // häufigste Ursache für „Funktion tut nichts".
-const SERVER_ERWARTET='2026-07-28.53';
+const SERVER_ERWARTET='2026-07-28.54';
 function versionPruefen(){
   const el=$('#versionWarnung'); if(!el) return;
   const v=(S.dims&&S.dims.version)||null;
-  if(v===SERVER_ERWARTET){ el.hidden=true; return; }
-  el.hidden=false;
+  if(v===SERVER_ERWARTET){ el.classList.add('hide'); return; }
+  el.classList.remove('hide');
+  el.style.display='block';
   el.innerHTML=v
     ? `<b>Server und Oberfläche passen nicht zusammen.</b> Auf dem Server läuft `
       +`<code>${esc(v)}</code>, diese Seite erwartet <code>${SERVER_ERWARTET}</code>. `
@@ -2584,7 +2585,7 @@ async function loadMarkenMonat(){
   try{ d=await raw('/data/markenmonat',{von,bis,marken:[...MM_MARKEN].join('|'),sep:'|',
         filiale:f.filiale,kanal:f.kanal}); }
   catch(e){ msg('#mmMsg',e.message,'err'); return; }
-  msg('#mmMsg','');
+  msg('#mmMsg', d.hinweis||'', d.hinweis?'err':'info');
   S.last.mm=d; S.last.mmMonat=null;
   const g=d.gesamt;
   const proMonat=g.monate?g.stueck/g.monate:0;

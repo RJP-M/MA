@@ -58,7 +58,7 @@ except Exception:              # noqa: BLE001
 
 # Fassung dieses Servers. Das Dashboard vergleicht sie mit seiner eigenen und
 # weist darauf hin, wenn eine der beiden Dateien beim Hochladen vergessen wurde.
-VERSION = "2026-07-28.53"
+VERSION = "2026-07-28.54"
 
 DEFAULT_TARGET = "https://portal.neo-wws.de/neo-server-prod"
 HERE = Path(__file__).resolve().parent
@@ -162,10 +162,24 @@ CREATE TABLE IF NOT EXISTS api_zaehler(monat TEXT PRIMARY KEY, anzahl INTEGER NO
 """
 
 
+def norm_txt(s):
+    """Text zum Vergleichen vereinheitlichen.
+
+    Markennamen kommen aus der Warenwirtschaft oft mit Leerzeichen am Rand,
+    doppelten Leerzeichen oder geschuetzten Leerzeichen. Ein direkter Vergleich
+    scheitert daran stillschweigend. Hier wird alles auf einfache Leerzeichen
+    reduziert und kleingeschrieben."""
+    if s is None:
+        return ""
+    return " ".join(str(s).replace(" ", " ").split()).strip().lower()
+
+
 def db():
     con = sqlite3.connect(CFG["db"], timeout=30)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
+    # In SQL nutzbar machen, damit Filter unabhaengig von solchen Feinheiten greifen
+    con.create_function("norm_txt", 1, norm_txt)
     return con
 
 
@@ -1221,11 +1235,11 @@ def q_markenmonat(con, q):
 
     bed, args = ["u.datum BETWEEN ? AND ?"], [von, bis]
     if marken:
-        # Auf beiden Seiten trimmen: in der Warenwirtschaft haengen an
-        # Markennamen haeufig Leerzeichen, sonst greift der Filter ins Leere.
-        bed.append("TRIM(COALESCE(a.marke,'(ohne Marke)')) IN (%s)"
+        # Vergleich ueber die vereinheitlichte Schreibweise, damit Leerzeichen
+        # und Gross-/Kleinschreibung nicht stillschweigend zu null Treffern fuehren.
+        bed.append("norm_txt(COALESCE(a.marke,'(ohne Marke)')) IN (%s)"
                    % ",".join("?" * len(marken)))
-        args += marken
+        args += [norm_txt(m) for m in marken]
     if q.get("filiale"):
         bed.append("u.filialeNr = ?")
         args.append(int(q["filiale"]))
@@ -1307,12 +1321,35 @@ def q_markenmonat(con, q):
                        "summe": sum((v.get("brutto") or 0) for v in je_marke[m].values()),
                        "stueckSumme": sum((v.get("stueck") or 0) for v in je_marke[m].values())})
 
-    return {"von": von, "bis": bis, "marken": marken, "perioden": perioden,
-            "monate": monate, "serien": serien,
-            "gesamt": {"stueck": sum(z["stueck"] for z in monate),
-                       "brutto": sum(z["brutto"] for z in monate),
-                       "rohertrag": sum(z["rohertrag"] for z in monate),
-                       "monate": len(monate)}}
+    erg = {"von": von, "bis": bis, "marken": marken, "perioden": perioden,
+           "monate": monate, "serien": serien,
+           "gesamt": {"stueck": sum(z["stueck"] for z in monate),
+                      "brutto": sum(z["brutto"] for z in monate),
+                      "rohertrag": sum(z["rohertrag"] for z in monate),
+                      "monate": len(monate)}}
+
+    # Nichts gefunden, obwohl gefiltert wurde? Dann nachsehen, ob es die Marke
+    # ueberhaupt gibt und ob im Zeitraum Umsatz vorliegt -- sonst raetselt man
+    # vor einer leeren Seite.
+    if marken and not monate:
+        vorhanden = con.execute(
+            "SELECT COUNT(*) n FROM artikel WHERE norm_txt(marke) IN (%s)"
+            % ",".join("?" * len(marken)), [norm_txt(m) for m in marken]).fetchone()["n"]
+        zeitraum = con.execute(
+            "SELECT COUNT(*) n FROM umsatz WHERE datum BETWEEN ? AND ?",
+            (von, bis)).fetchone()["n"]
+        if not zeitraum:
+            erg["hinweis"] = ("Im Zeitraum %s bis %s sind überhaupt keine Umsätze "
+                              "gespeichert." % (von, bis))
+        elif not vorhanden:
+            erg["hinweis"] = ("Zu %s gibt es keine Artikel im Stamm. Steht die Marke "
+                              "im Artikelstamm vielleicht anders geschrieben?"
+                              % ", ".join(marken))
+        else:
+            erg["hinweis"] = ("%d Artikel dieser Marke sind vorhanden, aber im "
+                              "Zeitraum wurde keiner verkauft."
+                              % vorhanden)
+    return erg
 
 
 def q_penner(con, q):
