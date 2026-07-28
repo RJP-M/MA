@@ -58,7 +58,7 @@ except Exception:              # noqa: BLE001
 
 # Fassung dieses Servers. Das Dashboard vergleicht sie mit seiner eigenen und
 # weist darauf hin, wenn eine der beiden Dateien beim Hochladen vergessen wurde.
-VERSION = "2026-07-28.54"
+VERSION = "2026-07-28.55"
 
 DEFAULT_TARGET = "https://portal.neo-wws.de/neo-server-prod"
 HERE = Path(__file__).resolve().parent
@@ -1332,23 +1332,41 @@ def q_markenmonat(con, q):
     # ueberhaupt gibt und ob im Zeitraum Umsatz vorliegt -- sonst raetselt man
     # vor einer leeren Seite.
     if marken and not monate:
+        platz = ",".join("?" * len(marken))
+        norm = [norm_txt(m) for m in marken]
         vorhanden = con.execute(
-            "SELECT COUNT(*) n FROM artikel WHERE norm_txt(marke) IN (%s)"
-            % ",".join("?" * len(marken)), [norm_txt(m) for m in marken]).fetchone()["n"]
+            "SELECT COUNT(*) n FROM artikel WHERE norm_txt(marke) IN (%s)" % platz,
+            norm).fetchone()["n"]
         zeitraum = con.execute(
             "SELECT COUNT(*) n FROM umsatz WHERE datum BETWEEN ? AND ?",
             (von, bis)).fetchone()["n"]
+        # Gab es zu dieser Marke ueberhaupt jemals Verkaeufe?
+        je = con.execute(
+            "SELECT COUNT(*) n, MIN(u.datum) erster, MAX(u.datum) letzter "
+            "FROM umsatz u LEFT JOIN artikel a ON a.artikelNr = u.artikelNr "
+            "WHERE norm_txt(COALESCE(a.marke,'(ohne Marke)')) IN (%s)" % platz,
+            norm).fetchone()
+        namen = ", ".join(marken)
         if not zeitraum:
             erg["hinweis"] = ("Im Zeitraum %s bis %s sind überhaupt keine Umsätze "
                               "gespeichert." % (von, bis))
         elif not vorhanden:
-            erg["hinweis"] = ("Zu %s gibt es keine Artikel im Stamm. Steht die Marke "
-                              "im Artikelstamm vielleicht anders geschrieben?"
-                              % ", ".join(marken))
+            erg["hinweis"] = ("Zu %s gibt es keine Artikel im Artikelstamm. Steht die "
+                              "Marke dort vielleicht anders geschrieben?" % namen)
+        elif not je["n"]:
+            erg["hinweis"] = (
+                "%d Artikel von %s stehen im Artikelstamm, es sind aber zu keinem "
+                "davon Verkäufe gespeichert — auch nicht außerhalb des Zeitraums. "
+                "Das deutet darauf hin, dass die Artikelnummern in den Umsätzen "
+                "nicht zum Artikelstamm passen." % (vorhanden, namen))
         else:
-            erg["hinweis"] = ("%d Artikel dieser Marke sind vorhanden, aber im "
-                              "Zeitraum wurde keiner verkauft."
-                              % vorhanden)
+            erg["hinweis"] = (
+                "%s wurde im Zeitraum %s bis %s nicht verkauft. Verkäufe liegen vor "
+                "von %s bis %s (%d Positionen) — bitte den Zeitraum anpassen."
+                % (namen, von, bis, je["erster"], je["letzter"], je["n"]))
+        erg["diagnose"] = {"artikelImStamm": vorhanden, "positionenGesamt": je["n"],
+                           "ersterVerkauf": je["erster"], "letzterVerkauf": je["letzter"],
+                           "umsatzzeilenImZeitraum": zeitraum}
     return erg
 
 

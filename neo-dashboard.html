@@ -717,7 +717,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <h3>Über</h3>
       <div class="info">
         <b>Meister Parfümerie Dashboard</b><br>
-        Version <span id="einstVersion">v2026-07-28.54</span><br>
+        Version <span id="einstVersion">v2026-07-28.55</span><br>
         Datenquelle NEO-WWS über die lokale Zwischenablage <code>neo-cache.db</code>.
       </div>
       <div class="row" style="margin-top:14px">
@@ -1274,8 +1274,10 @@ body:not(.servermodus) .nur-server{display:none!important}
       <div class="card">
         <h2>Marken je Monat <span class="r">
           <select id="mmZeitraum" style="width:auto">
-            <option value="12" selected>Letzte 12 Monate</option>
+            <option value="dieser">Dieser Monat</option>
+            <option value="letzter">Letzter Monat</option>
             <option value="6">Letzte 6 Monate</option>
+            <option value="12" selected>Letzte 12 Monate</option>
             <option value="24">Letzte 24 Monate</option>
             <option value="ytd">Dieses Jahr</option>
             <option value="filter">Zeitraum aus dem Filter oben</option>
@@ -1731,7 +1733,7 @@ $('#btnSync').onclick=async()=>{
 // Fassung, die dieses Dashboard vom Server erwartet. Stimmen die beiden nicht
 // überein, wurde beim Hochladen eine der Dateien vergessen — das ist die
 // häufigste Ursache für „Funktion tut nichts".
-const SERVER_ERWARTET='2026-07-28.54';
+const SERVER_ERWARTET='2026-07-28.55';
 function versionPruefen(){
   const el=$('#versionWarnung'); if(!el) return;
   const v=(S.dims&&S.dims.version)||null;
@@ -2575,9 +2577,15 @@ function mmMarkenListe(){
 async function loadMarkenMonat(){
   if(!$('#mmMarken').children.length) mmMarkenListe();
   const f=filters(), wahl=$('#mmZeitraum').value;
-  const bis=f.bis||iso(new Date());
+  let bis=f.bis||iso(new Date());
   let von;
-  if(wahl==='ytd')         von=bis.slice(0,4)+'-01-01';
+  if(wahl==='dieser'){                       // laufender Monat bis zum Bis-Datum
+    von=bis.slice(0,7)+'-01';
+  } else if(wahl==='letzter'){               // kompletter Vormonat
+    const e=new Date(bis.slice(0,7)+'-01');
+    e.setMonth(e.getMonth()-1); von=iso(e);
+    const l=new Date(e.getFullYear(),e.getMonth()+1,0); bis=iso(l);
+  } else if(wahl==='ytd')  von=bis.slice(0,4)+'-01-01';
   else if(wahl==='filter') von=f.von;
   else { const d=new Date(bis); d.setMonth(d.getMonth()-(+wahl-1)); d.setDate(1); von=iso(d); }
   msg('#mmMsg','Lade…','info');
