@@ -185,6 +185,12 @@ tbody tr:last-child td{border-bottom:0}
 }
 .tabs button:hover{color:var(--fg);background:var(--card-2)}
 .tabs button.on{color:var(--acc);background:var(--acc-soft);font-weight:600}
+/* „Mehr“ steht rechts und ist als Schalter erkennbar, nicht als Reiter */
+.tabs .mehrSchalter{
+  margin-left:auto;color:var(--mut);border:1px dashed var(--line);font-size:13px;
+}
+.tabs .mehrSchalter:hover{color:var(--fg);border-color:var(--mut)}
+.tabs .mehrSchalter.auf{color:var(--fg);border-style:solid}
 
 /* ---------- Meldungen ---------- */
 .msg{
@@ -711,7 +717,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <h3>Über</h3>
       <div class="info">
         <b>Meister Parfümerie Dashboard</b><br>
-        Version <span id="einstVersion">v2026-07-28.52</span><br>
+        Version <span id="einstVersion">v2026-07-28.53</span><br>
         Datenquelle NEO-WWS über die lokale Zwischenablage <code>neo-cache.db</code>.
       </div>
       <div class="row" style="margin-top:14px">
@@ -874,26 +880,30 @@ body:not(.servermodus) .nur-server{display:none!important}
       <div class="msg" id="fMsg"></div>
     </div>
 
+    <div class="msg err" id="versionWarnung" hidden style="display:block;margin-bottom:14px"></div>
+
     <div class="tabs">
       <!-- Reihenfolge nach Nutzung: tägliches Geschäft, dann Ertrag und Ware,
            danach periodische Auswertungen und zuletzt Werkzeuge und Pflege. -->
       <button class="on" data-tab="ueber">Überblick</button>
       <button data-tab="onlineshop">Onlineshop</button>
       <button data-tab="filialen">Filialen</button>
-      <button data-tab="trends">Trends</button>
       <button data-tab="marken">Ranking</button>
       <button data-tab="markenmonat">Marken je Monat</button>
-      <button data-tab="marge">Marge &amp; Rabatt</button>
-      <button data-tab="bestand">Bestand</button>
-      <button data-tab="penner">Ladenhüter</button>
-      <button data-tab="alerts">Alerts</button>
-      <button data-tab="sortiment">Sortiment</button>
-      <button data-tab="kapital">Kapital</button>
-      <button data-tab="ytd">YTD</button>
-      <button data-tab="wochentag">Wochentage</button>
-      <button data-tab="suche">Produktsuche</button>
-      <button data-tab="jahr">Jahresgespräch</button>
-      <button data-tab="daten">Daten</button>
+      <!-- Alles Weitere liegt hinter „Mehr“, damit die Leiste im Alltag schmal bleibt -->
+      <button class="mehrTab" data-tab="trends" hidden>Trends</button>
+      <button class="mehrTab" data-tab="marge" hidden>Marge &amp; Rabatt</button>
+      <button class="mehrTab" data-tab="bestand" hidden>Bestand</button>
+      <button class="mehrTab" data-tab="penner" hidden>Pennerartikel</button>
+      <button class="mehrTab" data-tab="alerts" hidden>Alerts</button>
+      <button class="mehrTab" data-tab="sortiment" hidden>Sortiment</button>
+      <button class="mehrTab" data-tab="kapital" hidden>Kapital</button>
+      <button class="mehrTab" data-tab="ytd" hidden>YTD</button>
+      <button class="mehrTab" data-tab="wochentag" hidden>Wochentage</button>
+      <button class="mehrTab" data-tab="suche" hidden>Produktsuche</button>
+      <button class="mehrTab" data-tab="jahr" hidden>Jahresgespräch</button>
+      <button class="mehrTab" data-tab="daten" hidden>Daten</button>
+      <button id="btnMehrTabs" class="mehrSchalter">Mehr ▾</button>
     </div>
 
     <section id="t-ueber">
@@ -922,8 +932,6 @@ body:not(.servermodus) .nur-server{display:none!important}
           <div class="hint" style="margin-top:12px">Zeile anklicken filtert das gesamte Dashboard auf diese Warengruppe.</div>
         </div>
       </div>
-      <div class="card"><h2>Umsatz nach Filiale im Zeitverlauf <span class="r hint" id="filInfo"></span></h2><canvas id="cFil"></canvas></div>
-      <div class="card"><h2>Top-Marken im Zeitverlauf <span class="r hint" id="markenInfo"></span></h2><canvas id="cTopMarken"></canvas></div>
       <div class="two">
         <div class="card"><h2>Gewinner vs. Vorjahr</h2><div class="scroll sm"><table id="tWin">
           <thead><tr><th>Marke</th><th class="num">Umsatz</th><th class="num">Δ%</th></tr></thead><tbody></tbody></table></div></div>
@@ -1019,6 +1027,8 @@ body:not(.servermodus) .nur-server{display:none!important}
     </section>
 
     <section id="t-filialen" class="hide">
+      <div class="card"><h2>Umsatz nach Filiale im Zeitverlauf <span class="r hint" id="filInfo"></span></h2>
+        <canvas id="cFil"></canvas></div>
       <div class="card"><h2>Filialbenchmark <span class="r hint" id="fbInfo"></span></h2>
         <div class="scroll"><table id="tFb"><thead><tr>
           <th data-k="dim">Filiale</th><th data-k="brutto" class="num">Umsatz</th>
@@ -1327,7 +1337,7 @@ body:not(.servermodus) .nur-server{display:none!important}
 
     <section id="t-penner" class="hide">
       <div class="card">
-        <h2>Ladenhüter <span class="r">
+        <h2>Pennerartikel <span class="r">
           <select id="pZeitraum" style="width:auto">
             <option value="ytd" selected>Dieses Jahr (seit 1. Januar)</option>
             <option value="30">Letzte 30 Tage</option>
@@ -1718,8 +1728,27 @@ $('#btnSync').onclick=async()=>{
   $('#btnSync').disabled=false;
 };
 
+// Fassung, die dieses Dashboard vom Server erwartet. Stimmen die beiden nicht
+// überein, wurde beim Hochladen eine der Dateien vergessen — das ist die
+// häufigste Ursache für „Funktion tut nichts".
+const SERVER_ERWARTET='2026-07-28.53';
+function versionPruefen(){
+  const el=$('#versionWarnung'); if(!el) return;
+  const v=(S.dims&&S.dims.version)||null;
+  if(v===SERVER_ERWARTET){ el.hidden=true; return; }
+  el.hidden=false;
+  el.innerHTML=v
+    ? `<b>Server und Oberfläche passen nicht zusammen.</b> Auf dem Server läuft `
+      +`<code>${esc(v)}</code>, diese Seite erwartet <code>${SERVER_ERWARTET}</code>. `
+      +`Bitte <b>neo-proxy.py</b> erneut hochladen und den Deploy abwarten — `
+      +`bis dahin können einzelne Auswertungen leer bleiben.`
+    : `<b>Der Server meldet keine Version.</b> Es läuft dort noch eine ältere `
+      +`<b>neo-proxy.py</b>. Bitte erneut hochladen und den Deploy abwarten — `
+      +`bis dahin können einzelne Auswertungen leer bleiben.`;
+}
 async function loadDims(){
   S.dims=await raw('/data/dimensions'); const c=S.dims.cache; S.cache=c;
+  versionPruefen();
   const info=`Cache: ${nf0.format(c.artikel)} Artikel · ${c.umsatzTage||0} Umsatztage`
     +(c.umsatzVon?` (${c.umsatzVon} – ${c.umsatzBis})`:'')+` · ${nf0.format(c.bestandPositionen)} Bestandspositionen`;
   $('#syncCacheInfo').textContent=info;   // ausführlich steht es in den Einstellungen
@@ -1784,9 +1813,19 @@ function chips(){
 }
 
 const TABS=['ueber','onlineshop','filialen','trends','marken','markenmonat','marge','bestand','penner','alerts','sortiment','kapital','ytd','wochentag','suche','jahr','daten'];
-$$('.tabs button').forEach(b=>b.onclick=()=>{
+$$('.tabs button[data-tab]').forEach(b=>b.onclick=()=>{
   $$('.tabs button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
   TABS.forEach(t=>$('#t-'+t).classList.toggle('hide',t!==b.dataset.tab)); loadTab(b.dataset.tab)});
+/* Seltener gebrauchte Reiter ein-/ausklappen */
+function mehrTabs(auf){
+  $$('.tabs .mehrTab').forEach(b=>b.hidden=!auf);
+  $('#btnMehrTabs').textContent=auf?'Weniger ▴':'Mehr ▾';
+  $('#btnMehrTabs').classList.toggle('auf',auf);
+  try{localStorage.setItem('neoMehrTabs',auf?'1':'0')}catch(e){}
+}
+$('#btnMehrTabs').onclick=()=>mehrTabs($('.tabs .mehrTab').hidden);
+// Zustand merken; ist ein versteckter Reiter aktiv, bleibt aufgeklappt
+try{ if(localStorage.getItem('neoMehrTabs')==='1') mehrTabs(true); }catch(e){}
 function activeTab(){return ($('.tabs button.on')||{}).dataset?.tab||'ueber'}
 async function refresh(){chips();msg('#fMsg','Lade…','info');
   try{await loadOverview();await loadTab(activeTab());msg('#fMsg','')}catch(e){msg('#fMsg',e.message,'err')}}
@@ -1808,12 +1847,11 @@ async function loadTab(t){try{
 async function loadOverview(){
   const f=filters();
   const kpi=await raw('/data/kpi',f), pp=kpi.perioden;
-  const [trend,trendVJ,rank,zFil,zMarke,rWg,rYtd]=await Promise.all([
+  // Filial- und Markenverlauf liegen in den eigenen Reitern (Filialen, Ranking)
+  const [trend,trendVJ,rank,rWg,rYtd]=await Promise.all([
     raw('/data/trend',f),
     raw('/data/trend',{...f,von:pp.vorjahr[0],bis:pp.vorjahr[1]}),
     raw('/data/ranking',{...f,dim:'marke'}),
-    raw('/data/zeitreihe',{...f,dim:'filiale',top:6}),
-    raw('/data/zeitreihe',{...f,dim:'marke',top:6}),
     raw('/data/ranking',{...f,dim:'warengruppe'}),
     raw('/data/ytd',f)]);
   ringWarengruppen(rWg.rows);
@@ -1842,13 +1880,6 @@ async function loadOverview(){
   $('#trendInfo').textContent=`${p.aktuell[0]} – ${p.aktuell[1]} (${p.tage} Tage)`
     +` · Vorjahr ${p.vorjahr[0]} – ${p.vorjahr[1]}`;
   zeichneTrend();
-  const gr=g=>({tag:'Tageswerte',woche:'Wochenwerte',monat:'Monatswerte'}[g]||g);
-  linien('cFil',zFil.perioden,zFil.serien);
-  $('#filInfo').textContent=gr(zFil.granularitaet)
-    +(zFil.weitere?` · ${zFil.weitere} weitere Filialen nicht dargestellt`:'')
-    +(zFil.onlineQuelle==='shopify'?' · Onlineshop aus Shopify':'');
-  linien('cTopMarken',zMarke.perioden,zMarke.serien);
-  $('#markenInfo').textContent=gr(zMarke.granularitaet)+` · Top 6`+(zMarke.weitere?` von ${zMarke.weitere+6} Marken`:'');
   const rel=rank.rows.filter(r=>r.bruttoVJ>0||r.brutto>0);
   const mk=arr=>arr.map(r=>`<tr><td class="w">${esc(r.dim)}</td><td class="num">${eur(r.brutto)}</td>
     <td class="num ${cls(r.pctVJ)}">${pct(r.pctVJ)}</td></tr>`).join('');
@@ -2104,8 +2135,14 @@ $('#sDim').onchange=$('#nTage').onchange=()=>loadSortiment();
 
 /* ---- Filialbenchmark ---- */
 async function loadFilialbenchmark(){
-  const d=await raw('/data/filialbenchmark',filters());
+  const f=filters();
+  const [d,z]=await Promise.all([raw('/data/filialbenchmark',f),
+    raw('/data/zeitreihe',{...f,dim:'filiale',top:6})]);
   S.last.fb=d.rows;
+  linien('cFil',z.perioden,z.serien);
+  $('#filInfo').textContent=({tag:'Tageswerte',woche:'Wochenwerte',monat:'Monatswerte'}[z.granularitaet]||'')
+    +(z.weitere?` · ${z.weitere} weitere Filialen nicht dargestellt`:'')
+    +(z.onlineQuelle==='shopify'?' · Onlineshop aus Shopify':'');
   $('#fbInfo').textContent=(d.schnittProKasseTag
     ? `Schnitt ${eur(d.schnittProKasseTag)} je Kasse und Tag über ${d.tage} Tage (ohne Webshop)`:'')
     +(d.onlineQuelle==='shopify'?' · Onlineshop aus Shopify':'');
@@ -2238,26 +2275,13 @@ async function loadWindows(){
     const mk=a=>a.map(r=>`<tr><td class="w">${esc(r.dim)}</td><td class="num">${eur(r.cur)}</td>
       <td class="num ${cls(r.pct)}">${pct(r.pct)}</td><td class="num ${cls(r.pctVJ)}">${pct(r.pctVJ)}</td></tr>`).join('');
     const H='<thead><tr><th>Name</th><th class="num">Umsatz</th><th class="num">Δ% VP</th><th class="num">Δ% VJ</th></tr></thead>';
-    const wt=b.wochentage||[];
-    const maxPT=Math.max(...wt.map(x=>x.proTag||0),1);
-    const wtHtml=wt.length?`
-      <div class="mini" style="margin-top:22px">Wochentagsprofil in diesem Fenster</div>
-      <table><thead><tr><th>Tag</th><th class="num">Tage</th><th class="num">Umsatz</th>
-        <th class="num">Ø je Tag</th><th style="width:150px">Verteilung</th>
-        <th class="num">Anteil</th><th class="num">Ø Bon</th><th class="num">Δ% VP</th></tr></thead><tbody>`
-      +wt.map(x=>`<tr><td>${esc(x.name)}</td><td class="num">${nf0.format(x.tage)}</td>
-        <td class="num">${eur(x.brutto)}</td><td class="num">${eur(x.proTag)}</td>
-        <td><div class="bar" style="margin:0"><i style="width:${(x.proTag/maxPT*100).toFixed(0)}%"></i></div></td>
-        <td class="num">${nf1.format(x.anteil)} %</td>
-        <td class="num">${x.bonwert==null?'—':eur2(x.bonwert)}</td>
-        <td class="num ${cls(x.pctVP)}">${pct(x.pctVP)}</td></tr>`).join('')
-      +'</tbody></table>':'';
+    // Das Wochentagsprofil steht im eigenen Reiter „Wochentage“ und bleibt hier weg
     return `<div class="card"><h2>${w} Tage <span class="r hint">${b.aktuell[0]} – ${b.aktuell[1]} · Vorperiode ${b.vorperiode[0]} – ${b.vorperiode[1]} · Gesamt ${eur(ges)}</span></h2>
       <canvas id="cWin${w}"></canvas>
       <div class="hint" id="winInfo${w}" style="margin:12px 0 20px"></div>
       <div class="two"><div><div class="mini">Stärkstes Wachstum</div><div class="scroll sm"><table>${H}<tbody>${mk(up)}</tbody></table></div></div>
       <div><div class="mini">Stärkster Rückgang</div><div class="scroll sm"><table>${H}<tbody>${mk(dn)}</tbody></table></div></div></div>
-      ${wtHtml}</div>`;
+      </div>`;
   }).join('');
   // Chart erst nach dem Einhängen des Canvas-Elements zeichnen
   zeichneFenster(fenster,d[fenster]);
@@ -2620,7 +2644,7 @@ $('#btnMmCsv').onclick=()=>{const d=S.last.mm; if(d)csv(d.monate,'neo-marken-je-
 $('#btnMmArtikelCsv').onclick=()=>{const a=S.last.mmArtikel;
   if(a)csv(a,'neo-artikel-'+(S.last.mmMonat||'')+'.csv')};
 
-/* ---- Ladenhüter (Artikel ohne Verkauf im Zeitraum) ---- */
+/* ---- Pennerartikel (kein einziger Verkauf im Zeitraum) ---- */
 async function loadPenner(){
   const f=filters(), wahl=$('#pZeitraum').value;
   const bis=f.bis||iso(new Date());
@@ -2628,7 +2652,7 @@ async function loadPenner(){
   if(wahl==='ytd')          von=bis.slice(0,4)+'-01-01';
   else if(wahl==='filter')  von=f.von;
   else von=iso(new Date(new Date(bis).getTime()-(+wahl-1)*864e5));
-  msg('#pMsg','Suche Ladenhüter…','info');
+  msg('#pMsg','Suche Pennerartikel…','info');
   let d;
   try{ d=await raw('/data/penner',{von,bis,nurBestand:$('#pBestand').value,
         filiale:f.filiale,marke:f.marke,submarke:f.submarke,

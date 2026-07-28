@@ -56,6 +56,10 @@ try:
 except Exception:              # noqa: BLE001
     neo_shopify = None
 
+# Fassung dieses Servers. Das Dashboard vergleicht sie mit seiner eigenen und
+# weist darauf hin, wenn eine der beiden Dateien beim Hochladen vergessen wurde.
+VERSION = "2026-07-28.53"
+
 DEFAULT_TARGET = "https://portal.neo-wws.de/neo-server-prod"
 HERE = Path(__file__).resolve().parent
 DASHBOARD = HERE / "neo-dashboard.html"
@@ -2785,6 +2789,7 @@ def q_dimensions(con):
             "autosyncStatus": meta_get(con, "autosync_status"),
         },
         "api": api_stand(con),
+        "version": VERSION,
         "sonntag": {
             "beruecksichtigt": CFG["sonntag"],
             "tageMitUmsatz": so["t"], "umsatz": so["s"],
