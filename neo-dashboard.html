@@ -717,7 +717,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <h3>Über</h3>
       <div class="info">
         <b>Meister Parfümerie Dashboard</b><br>
-        Version <span id="einstVersion">v2026-07-28.57</span><br>
+        Version <span id="einstVersion">v2026-07-28.58</span><br>
         Datenquelle NEO-WWS über die lokale Zwischenablage <code>neo-cache.db</code>.
       </div>
       <div class="row" style="margin-top:14px">
@@ -1733,7 +1733,7 @@ $('#btnSync').onclick=async()=>{
 // Fassung, die dieses Dashboard vom Server erwartet. Stimmen die beiden nicht
 // überein, wurde beim Hochladen eine der Dateien vergessen — das ist die
 // häufigste Ursache für „Funktion tut nichts".
-const SERVER_ERWARTET='2026-07-28.56';
+const SERVER_ERWARTET='2026-07-28.58';
 function versionPruefen(){
   const el=$('#versionWarnung'); if(!el) return;
   const v=(S.dims&&S.dims.version)||null;
@@ -2588,10 +2588,12 @@ async function loadMarkenMonat(){
   } else if(wahl==='ytd')  von=bis.slice(0,4)+'-01-01';
   else if(wahl==='filter') von=f.von;
   else { const d=new Date(bis); d.setMonth(d.getMonth()-(+wahl-1)); d.setDate(1); von=iso(d); }
+  // Bei einem einzelnen Monat die Kurve nach Tagen auflösen — ein Punkt sagt nichts
+  const tagesweise=(wahl==='dieser'||wahl==='letzter');
   msg('#mmMsg','Lade…','info');
   let d;
   try{ d=await raw('/data/markenmonat',{von,bis,marken:[...MM_MARKEN].join('|'),sep:'|',
-        filiale:f.filiale,kanal:f.kanal}); }
+        gran:tagesweise?'tag':'',filiale:f.filiale,kanal:f.kanal}); }
   catch(e){ msg('#mmMsg',e.message,'err'); return; }
   msg('#mmMsg', d.hinweis||'', d.hinweis?'err':'info');
   S.last.mm=d; S.last.mmMonat=null;
@@ -2608,8 +2610,10 @@ async function loadMarkenMonat(){
 
   const wert=$('#mmWert').value;
   const serien=d.serien.slice(0,8).map(s=>({dim:s.dim,werte:wert==='umsatz'?s.umsatz:s.werte}));
-  const wenige=d.perioden.length<=3;   // ein einzelner Monat als Linie sieht albern aus
-  $('#mmChartInfo').textContent=(wert==='umsatz'?'Umsatz':'Verkaufte Stück')+' je Monat'
+  // Tagesauflösung immer als Linie; sonst wären zwei, drei Punkte als Linie albern
+  const wenige=!tagesweise && d.perioden.length<=3;
+  $('#mmChartInfo').textContent=(wert==='umsatz'?'Umsatz':'Verkaufte Stück')
+    +(tagesweise?' je Tag':' je Monat')
     +(d.serien.length>8?` · Top 8 von ${d.serien.length} Marken`:'');
   // Achse: bei Stückzahlen ganze Zahlen, sonst gäbe es bei kleinen Werten
   // mehrfach dieselbe Beschriftung

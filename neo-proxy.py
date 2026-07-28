@@ -58,7 +58,7 @@ except Exception:              # noqa: BLE001
 
 # Fassung dieses Servers. Das Dashboard vergleicht sie mit seiner eigenen und
 # weist darauf hin, wenn eine der beiden Dateien beim Hochladen vergessen wurde.
-VERSION = "2026-07-28.56"
+VERSION = "2026-07-28.58"
 
 DEFAULT_TARGET = "https://portal.neo-wws.de/neo-server-prod"
 HERE = Path(__file__).resolve().parent
@@ -1272,38 +1272,51 @@ def q_markenmonat(con, q):
                 "brutto": sum(a["brutto"] or 0 for a in artikel),
                 "rohertrag": sum(a["rohertrag"] or 0 for a in artikel)}
 
-    # --- Monatsuebersicht
-    sql = """
-    SELECT substr(u.datum,1,7) AS monat,
-      TRIM(COALESCE(a.marke,'(ohne Marke)')) AS marke,
-      {metrics}
-    {frm} WHERE {where}
-    GROUP BY monat, marke ORDER BY monat
-    """.format(metrics=METRICS, frm=BASE_FROM, where=where)
+    # --- Uebersicht
+    # Die Kurve laesst sich feiner aufloesen als die Tabelle: bei einem einzelnen
+    # Monat sind Tageswerte aussagekraeftiger als ein einziger Punkt.
+    gran = (q.get("gran") or "monat").lower()
+    kurve_ausdruck = "u.datum" if gran == "tag" else "substr(u.datum,1,7)"
 
-    je_monat, je_marke, perioden = {}, {}, []
-    for r in con.execute(sql, args):
-        d = marge(dict(r))
-        p, m = r["monat"], r["marke"]
-        if p not in perioden:
-            perioden.append(p)
-        z = je_monat.setdefault(p, {"monat": p, "stueck": 0, "brutto": 0.0,
-                                    "netto": 0.0, "rohertrag": 0.0, "belege": 0,
-                                    "artikel": 0, "nettoMitEk": 0.0})
-        z["stueck"] += d["stueck"] or 0
-        z["brutto"] += d["brutto"] or 0
-        z["netto"] += d["netto"] or 0
-        z["rohertrag"] += d["rohertrag"] or 0
-        z["belege"] += d["belege"] or 0
-        z["artikel"] += d["artikel"] or 0
-        z["nettoMitEk"] += d.get("nettoMitEk") or 0
-        je_marke.setdefault(m, {})[p] = d
+    def gruppiert(ausdruck):
+        sql = """
+        SELECT {ausdruck} AS periode,
+          TRIM(COALESCE(a.marke,'(ohne Marke)')) AS marke,
+          {metrics}
+        {frm} WHERE {where}
+        GROUP BY periode, marke ORDER BY periode
+        """.format(ausdruck=ausdruck, metrics=METRICS, frm=BASE_FROM, where=where)
+        je_periode, je_marke, perioden = {}, {}, []
+        for r in con.execute(sql, args):
+            d = marge(dict(r))
+            p, m = r["periode"], r["marke"]
+            if p not in perioden:
+                perioden.append(p)
+            z = je_periode.setdefault(p, {"monat": p, "stueck": 0, "brutto": 0.0,
+                                          "netto": 0.0, "rohertrag": 0.0, "belege": 0,
+                                          "artikel": 0, "nettoMitEk": 0.0})
+            z["stueck"] += d["stueck"] or 0
+            z["brutto"] += d["brutto"] or 0
+            z["netto"] += d["netto"] or 0
+            z["rohertrag"] += d["rohertrag"] or 0
+            z["belege"] += d["belege"] or 0
+            z["artikel"] += d["artikel"] or 0
+            z["nettoMitEk"] += d.get("nettoMitEk") or 0
+            je_marke.setdefault(m, {})[p] = d
+        for z in je_periode.values():
+            z["marge"] = (z["rohertrag"] / z["nettoMitEk"] * 100) if z["nettoMitEk"] else None
+            z["bonwert"] = (z["brutto"] / z["belege"]) if z["belege"] else None
+        return je_periode, je_marke, perioden
 
-    for z in je_monat.values():
-        z["marge"] = (z["rohertrag"] / z["nettoMitEk"] * 100) if z["nettoMitEk"] else None
-        z["bonwert"] = (z["brutto"] / z["belege"]) if z["belege"] else None
+    # Tabelle immer nach Monaten
+    je_monat, marken_monat, monats_perioden = gruppiert("substr(u.datum,1,7)")
+    # Kurve in der gewuenschten Aufloesung
+    if gran == "tag":
+        _, je_marke, perioden = gruppiert(kurve_ausdruck)
+    else:
+        je_marke, perioden = marken_monat, monats_perioden
 
-    monate = [je_monat[p] for p in perioden]
+    monate = [je_monat[p] for p in monats_perioden]
     # Veraenderung zum Vormonat und zum gleichen Monat im Vorjahr
     for i, z in enumerate(monate):
         vor = monate[i - 1] if i else None
@@ -1326,7 +1339,7 @@ def q_markenmonat(con, q):
                        "stueckSumme": sum((v.get("stueck") or 0) for v in je_marke[m].values())})
 
     erg = {"von": von, "bis": bis, "marken": marken, "perioden": perioden,
-           "monate": monate, "serien": serien,
+           "granularitaet": gran, "monate": monate, "serien": serien,
            "gesamt": {"stueck": sum(z["stueck"] for z in monate),
                       "brutto": sum(z["brutto"] for z in monate),
                       "rohertrag": sum(z["rohertrag"] for z in monate),
