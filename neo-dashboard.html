@@ -629,6 +629,12 @@ body:not(.servermodus) .nur-server{display:none!important}
         <button class="ghost sm" id="btnBackup2">Sichern</button>
       </div>
       <div class="info" id="einstCache" style="margin-top:12px"></div>
+      <div class="opt" style="margin-top:14px">
+        <div class="txt"><b>NEO-Abrufe diesen Monat</b>
+          <span>Die NEO-API wird pro Aufruf abgerechnet. Am Limit stoppt der Server
+            weitere Abrufe von selbst, damit keine Zusatzkosten entstehen.</span></div>
+      </div>
+      <div class="info" id="einstApi"></div>
       <div class="msg" id="einstMsg"></div>
     </div>
 
@@ -705,7 +711,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <h3>Über</h3>
       <div class="info">
         <b>Meister Parfümerie Dashboard</b><br>
-        Version <span id="einstVersion">v2026-07-24.47</span><br>
+        Version <span id="einstVersion">v2026-07-28.50</span><br>
         Datenquelle NEO-WWS über die lokale Zwischenablage <code>neo-cache.db</code>.
       </div>
       <div class="row" style="margin-top:14px">
@@ -876,8 +882,10 @@ body:not(.servermodus) .nur-server{display:none!important}
       <button data-tab="filialen">Filialen</button>
       <button data-tab="trends">Trends</button>
       <button data-tab="marken">Ranking</button>
+      <button data-tab="markenmonat">Marken je Monat</button>
       <button data-tab="marge">Marge &amp; Rabatt</button>
       <button data-tab="bestand">Bestand</button>
+      <button data-tab="penner">Ladenhüter</button>
       <button data-tab="alerts">Alerts</button>
       <button data-tab="sortiment">Sortiment</button>
       <button data-tab="kapital">Kapital</button>
@@ -1029,7 +1037,8 @@ body:not(.servermodus) .nur-server{display:none!important}
       <div class="kpis" id="dKpis"></div>
       <div class="card"><h2>Datenlücken <span class="r">
         <button class="ghost sm" id="btnLuecken">Neu prüfen</button>
-        <button class="sm" id="btnNachladen">Fehlende Tage nachladen</button></span></h2>
+        <button class="sm" id="btnNachladen">Fehlende Tage nachladen</button>
+        <button class="ghost sm" id="btnLeereNeu" hidden>Leere Tage neu laden</button></span></h2>
         <div class="msg" id="dMsg"></div>
         <div class="scroll sm"><table id="tLuecken"><thead><tr>
           <th>Von</th><th>Bis</th><th class="num">Tage</th></tr></thead><tbody></tbody></table></div>
@@ -1248,6 +1257,126 @@ body:not(.servermodus) .nur-server{display:none!important}
             <th>Merkmal</th><th>Besuche</th><th>Anteil</th>
           </tr></thead><tbody></tbody></table></div>
         </div>
+      </div>
+    </section>
+
+    <section id="t-markenmonat" class="hide">
+      <div class="card">
+        <h2>Marken je Monat <span class="r">
+          <select id="mmZeitraum" style="width:auto">
+            <option value="12" selected>Letzte 12 Monate</option>
+            <option value="6">Letzte 6 Monate</option>
+            <option value="24">Letzte 24 Monate</option>
+            <option value="ytd">Dieses Jahr</option>
+            <option value="filter">Zeitraum aus dem Filter oben</option>
+          </select>
+          <select id="mmWert" style="width:auto">
+            <option value="stueck" selected>Verkaufte Stück</option>
+            <option value="umsatz">Umsatz</option>
+          </select>
+          <button class="ghost sm" id="btnMmCsv">CSV</button></span></h2>
+        <div class="hint">Marken auswählen — die Auswahl gilt nur für diesen Tab.
+          Ohne Auswahl werden alle Marken zusammengefasst.</div>
+        <div class="row" style="gap:8px;margin:12px 0">
+          <input id="mmSuche" placeholder="Marke suchen…" style="max-width:260px">
+          <button class="ghost sm" id="mmAlle">Alle abwählen</button>
+          <span class="hint" id="mmAuswahlInfo"></span>
+        </div>
+        <div id="mmMarken" style="display:flex;flex-wrap:wrap;gap:8px;max-height:190px;overflow:auto"></div>
+        <div class="msg" id="mmMsg"></div>
+      </div>
+
+      <div class="kpis" id="mmKpis"></div>
+
+      <div class="card">
+        <h2>Verlauf je Marke <span class="r hint" id="mmChartInfo"></span></h2>
+        <canvas id="cMmVerlauf"></canvas>
+      </div>
+
+      <div class="card">
+        <h2>Monatsübersicht <span class="r hint">Zeile anklicken zeigt die Artikel des Monats</span></h2>
+        <div class="scroll"><table id="tMmMonate"><thead><tr>
+          <th data-k="monat">Monat</th>
+          <th data-k="stueck" class="num">Stück</th>
+          <th data-k="pctVM" class="num">Δ% Vormonat</th>
+          <th data-k="stueckVJ" class="num">Stück VJ</th>
+          <th data-k="pctVJ" class="num">Δ% VJ</th>
+          <th data-k="brutto" class="num">Umsatz</th>
+          <th data-k="rohertrag" class="num">Rohertrag</th>
+          <th data-k="marge" class="num">Marge</th>
+          <th data-k="artikel" class="num">Artikel</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+
+      <div class="card">
+        <h2>Verkaufte Artikel <span class="r">
+          <span class="hint" id="mmArtikelInfo">Monat oben anklicken</span>
+          <button class="ghost sm" id="btnMmArtikelCsv" hidden>CSV</button></span></h2>
+        <div class="scroll"><table id="tMmArtikel"><thead><tr>
+          <th data-k="artikelNr" class="num">Artikel-Nr.</th>
+          <th data-k="bezeichnung">Bezeichnung</th>
+          <th data-k="marke">Marke</th>
+          <th data-k="warengruppe">Warengruppe</th>
+          <th data-k="stueck" class="num">Stück</th>
+          <th data-k="brutto" class="num">Umsatz</th>
+          <th data-k="rohertrag" class="num">Rohertrag</th>
+          <th data-k="marge" class="num">Marge</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <section id="t-penner" class="hide">
+      <div class="card">
+        <h2>Ladenhüter <span class="r">
+          <select id="pZeitraum" style="width:auto">
+            <option value="ytd" selected>Dieses Jahr (seit 1. Januar)</option>
+            <option value="30">Letzte 30 Tage</option>
+            <option value="90">Letzte 90 Tage</option>
+            <option value="180">Letzte 180 Tage</option>
+            <option value="365">Letzte 365 Tage</option>
+            <option value="filter">Zeitraum aus dem Filter oben</option>
+          </select>
+          <select id="pBestand" style="width:auto">
+            <option value="1" selected>Nur mit Bestand</option>
+            <option value="0">Alle Artikel</option>
+          </select>
+          <button class="ghost sm" id="btnPennerCsv">CSV</button></span></h2>
+        <div class="hint">Artikel, die im gewählten Zeitraum <b>kein einziges Mal</b> verkauft wurden.
+          Mit Bestand ist das totes Kapital im Regal. „Nie verkauft“ heißt: seit Beginn der
+          gespeicherten Daten gab es überhaupt keinen Verkauf.</div>
+        <div class="msg" id="pMsg"></div>
+      </div>
+
+      <div class="kpis" id="pKpis"></div>
+
+      <div class="card">
+        <h2>Nach Marke <span class="r hint" id="pMarkeInfo"></span></h2>
+        <div class="scroll"><table id="tPennerMarke"><thead><tr>
+          <th data-k="dim">Marke</th>
+          <th data-k="artikel" class="num">Artikel</th>
+          <th data-k="nieVerkauft" class="num">davon nie verkauft</th>
+          <th data-k="bestand" class="num">Bestand</th>
+          <th data-k="kapital" class="num">Gebundenes Kapital</th>
+          <th data-k="anteil" class="num">Anteil</th>
+          <th data-k="aeltester">Letzter Verkauf</th>
+        </tr></thead><tbody></tbody></table></div>
+        <div class="hint" style="margin-top:14px">Zeile anklicken filtert die Artikelliste unten auf diese Marke.</div>
+      </div>
+
+      <div class="card">
+        <h2>Artikel im Einzelnen <span class="r">
+          <span class="hint" id="pArtikelInfo"></span>
+          <button class="ghost sm" id="btnPennerAlle" hidden>Alle Marken zeigen</button></span></h2>
+        <div class="scroll"><table id="tPennerArtikel"><thead><tr>
+          <th data-k="artikelNr" class="num">Artikel-Nr.</th>
+          <th data-k="bezeichnung">Bezeichnung</th>
+          <th data-k="marke">Marke</th>
+          <th data-k="warengruppe">Warengruppe</th>
+          <th data-k="bestand" class="num">Bestand</th>
+          <th data-k="ekPreis" class="num">EK</th>
+          <th data-k="kapital" class="num">Kapital</th>
+          <th data-k="letzterVerkauf">Letzter Verkauf</th>
+        </tr></thead><tbody></tbody></table></div>
       </div>
     </section>
 
@@ -1652,7 +1781,7 @@ function chips(){
   $$('#chips span[data-s]').forEach(e=>e.onclick=()=>{const s=e.dataset.s;$(s).value=s==='#fKanal'?'all':'';refresh()});
 }
 
-const TABS=['ueber','onlineshop','filialen','trends','marken','marge','bestand','alerts','sortiment','kapital','ytd','wochentag','suche','jahr','daten'];
+const TABS=['ueber','onlineshop','filialen','trends','marken','markenmonat','marge','bestand','penner','alerts','sortiment','kapital','ytd','wochentag','suche','jahr','daten'];
 $$('.tabs button').forEach(b=>b.onclick=()=>{
   $$('.tabs button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
   TABS.forEach(t=>$('#t-'+t).classList.toggle('hide',t!==b.dataset.tab)); loadTab(b.dataset.tab)});
@@ -1666,6 +1795,8 @@ async function loadTab(t){try{
   else if(t==='ytd')await loadYtd();
   else if(t==='filialen')await loadFilialbenchmark();
   else if(t==='bestand')await loadBestand(); else if(t==='alerts')await loadAlerts();
+  else if(t==='penner')await loadPenner();
+  else if(t==='markenmonat')await loadMarkenMonat();
   else if(t==='onlineshop')await loadShopify();
   else if(t==='jahr')await loadJahr();
   else if(t==='daten')await loadLuecken();
@@ -2003,8 +2134,12 @@ async function loadLuecken(){
     ['Geladen',nf0.format(d.geladen)],
     ['Fehlend',nf0.format(d.fehlend)],['Abdeckung',nf1.format(d.abdeckung)+' %'],
     ['Lückenblöcke',nf0.format(d.bloecke.length)],
-    ['Tage ohne Umsatz',nf0.format(d.leereTage.length)]]
+    ['Tage ohne Umsatz',nf0.format(d.leereTage.length)],
+    ['davon verdächtig',nf0.format(d.verdaechtig||0)]]
     .map(([l,v])=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+  // Leere Werktage sind fast immer zu früh geholt worden — gezielt reparierbar
+  $('#btnLeereNeu').hidden = !(d.verdaechtig>0);
+  if(d.verdaechtig>0) $('#btnLeereNeu').textContent=`${d.verdaechtig} leere Tage neu laden`;
   $('#tLuecken tbody').innerHTML=d.bloecke.map(b=>
     `<tr><td>${b.von}</td><td>${b.bis}</td><td class="num">${b.tage}</td></tr>`).join('')
     ||'<tr><td colspan="3" class="flat">Keine Lücken im geprüften Zeitraum.</td></tr>';
@@ -2028,6 +2163,25 @@ $('#btnNachladen').onclick=async()=>{
     await loadDims(); await loadLuecken();
   }catch(e){msg('#dMsg',e.message,'err')}
   $('#btnNachladen').disabled=false;
+};
+// Leere Werktage gezielt noch einmal holen. Solche Tage entstehen, wenn ein
+// Tag zu früh abgerufen wurde, als noch kein Umsatz gebucht war.
+$('#btnLeereNeu').onclick=async()=>{
+  if(!SERVERMODUS && !S.auth){msg('#dMsg','Zum Nachladen erst unter „Zugang" verbinden.','err');return}
+  const d=S.last.luecken, tage=(d&&d.verdaechtigeTage)||[];
+  if(!tage.length){msg('#dMsg','Nichts zu reparieren.','ok');return}
+  $('#btnLeereNeu').disabled=true;
+  try{
+    await fetch(location.origin+'/sync/start?'+new URLSearchParams(
+      {what:'umsatz',tage:tage.join(',')}),
+      SERVERMODUS?{}:{headers:{'Authorization':'Basic '+S.auth}});
+    let run=true;
+    while(run){ await sleep(1000); const st=await raw('/sync/status');
+      msg('#dMsg','Lade '+st.done+'/'+st.total+' '+(st.log.slice(-1)[0]||''),'info');
+      if(!st.running){run=false; msg('#dMsg',st.error?'Abbruch: '+st.error:'Fertig.',st.error?'err':'ok')} }
+    await loadDims(); await loadLuecken();
+  }catch(e){msg('#dMsg',e.message,'err')}
+  $('#btnLeereNeu').disabled=false;
 };
 $('#btnBackup').onclick=async()=>{
   msg('#rMsg','Sichere…','info');
@@ -2359,6 +2513,164 @@ async function loadShopify(frisch){
 }
 $('#btnShopNeu').onclick=()=>loadShopify(true);
 
+/* ---- Marken je Monat ---- */
+let MM_MARKEN=new Set();          // gewählte Marken, gilt nur für diesen Tab
+function mmMarkenListe(){
+  const alle=(S.dims&&S.dims.marken)||[];
+  const such=($('#mmSuche').value||'').toLowerCase();
+  const sicht=alle.filter(m=>!such||m.toLowerCase().includes(such)).slice(0,400);
+  $('#mmMarken').innerHTML=sicht.map(m=>{
+    const an=MM_MARKEN.has(m);
+    return `<button class="ghost sm mmChip${an?' on':''}" data-m="${esc(m)}"
+      style="${an?'background:var(--acc);color:#fff;border-color:var(--acc)':''}">${esc(m)}</button>`;
+  }).join('')||'<span class="hint">Keine Marke gefunden.</span>';
+  $$('#mmMarken .mmChip').forEach(b=>b.onclick=()=>{
+    const m=b.dataset.m;
+    MM_MARKEN.has(m)?MM_MARKEN.delete(m):MM_MARKEN.add(m);
+    mmMarkenListe(); loadMarkenMonat();
+  });
+  $('#mmAuswahlInfo').textContent=MM_MARKEN.size
+    ? `${MM_MARKEN.size} Marke${MM_MARKEN.size>1?'n':''} gewählt`
+    : 'Keine Auswahl — alle Marken zusammen';
+}
+async function loadMarkenMonat(){
+  if(!$('#mmMarken').children.length) mmMarkenListe();
+  const f=filters(), wahl=$('#mmZeitraum').value;
+  const bis=f.bis||iso(new Date());
+  let von;
+  if(wahl==='ytd')         von=bis.slice(0,4)+'-01-01';
+  else if(wahl==='filter') von=f.von;
+  else { const d=new Date(bis); d.setMonth(d.getMonth()-(+wahl-1)); d.setDate(1); von=iso(d); }
+  msg('#mmMsg','Lade…','info');
+  let d;
+  try{ d=await raw('/data/markenmonat',{von,bis,marken:[...MM_MARKEN].join(','),
+        filiale:f.filiale,kanal:f.kanal}); }
+  catch(e){ msg('#mmMsg',e.message,'err'); return; }
+  msg('#mmMsg','');
+  S.last.mm=d; S.last.mmMonat=null;
+  const g=d.gesamt;
+  const proMonat=g.monate?g.stueck/g.monate:0;
+  $('#mmKpis').innerHTML=[
+    ['Verkaufte Stück',nf0.format(g.stueck),`in ${g.monate} Monaten`],
+    ['Ø je Monat',nf0.format(Math.round(proMonat)),'Stück'],
+    ['Umsatz',eur(g.brutto),''],
+    ['Rohertrag',eur(g.rohertrag),''],
+    ['Marken',nf0.format(d.serien.length),MM_MARKEN.size?'ausgewählt':'insgesamt'],
+  ].map(([l,v,u])=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div>`
+    +`<div class="d"><span class="mut">${u}</span></div></div>`).join('');
+
+  const wert=$('#mmWert').value;
+  const serien=d.serien.slice(0,8).map(s=>({dim:s.dim,werte:wert==='umsatz'?s.umsatz:s.werte}));
+  $('#mmChartInfo').textContent=(wert==='umsatz'?'Umsatz':'Verkaufte Stück')+' je Monat'
+    +(d.serien.length>8?` · Top 8 von ${d.serien.length} Marken`:'');
+  if(d.perioden.length) linien('cMmVerlauf',d.perioden,serien,
+    {scales:{y:{ticks:{callback:v=>wert==='umsatz'?kompakt(v):nf0.format(v)}}}});
+
+  table('#tMmMonate',d.monate,r=>[
+    ['w',r.monat],['num',nf0.format(r.stueck)],
+    ['num '+cls(r.pctVM),pct(r.pctVM)],
+    ['num',r.stueckVJ==null?'—':nf0.format(r.stueckVJ)],
+    ['num '+cls(r.pctVJ),pct(r.pctVJ)],
+    ['num',eur(r.brutto)],['num',eur(r.rohertrag)],
+    ['num',pct0(r.marge)],['num',nf0.format(r.artikel)]],
+    r=>mmArtikel(r.monat));
+  // Zuletzt vorhandenen Monat gleich aufklappen
+  if(d.monate.length) mmArtikel(d.monate[d.monate.length-1].monat);
+  else { $('#tMmArtikel tbody').innerHTML=''; $('#mmArtikelInfo').textContent='Keine Daten im Zeitraum.'; }
+}
+async function mmArtikel(monat){
+  const d=S.last.mm; if(!d) return;
+  const f=filters();
+  $('#mmArtikelInfo').textContent='Lade '+monat+'…';
+  let r;
+  try{ r=await raw('/data/markenmonat',{von:d.von,bis:d.bis,monat,
+        marken:[...MM_MARKEN].join(','),filiale:f.filiale,kanal:f.kanal}); }
+  catch(e){ $('#mmArtikelInfo').textContent=e.message; return; }
+  S.last.mmMonat=monat; S.last.mmArtikel=r.artikel;
+  const MN=['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
+  const name=MN[+monat.slice(5)-1]+' '+monat.slice(0,4);
+  $('#mmArtikelInfo').textContent=`${name} · ${nf0.format(r.anzahl)} Artikel · `
+    +`${nf0.format(r.stueck)} Stück · ${eur(r.brutto)}`;
+  $('#btnMmArtikelCsv').hidden=!r.anzahl;
+  table('#tMmArtikel',r.artikel,a=>[
+    ['num',a.artikelNr],['w',esc(a.bezeichnung)],['',esc(a.marke)],
+    ['',esc(a.warengruppe)],['num',nf0.format(a.stueck)],
+    ['num',eur(a.brutto)],['num',eur(a.rohertrag)],['num',pct0(a.marge)]],
+    a=>artikelDetail(a.artikelNr));
+}
+$('#mmZeitraum').onchange=()=>loadMarkenMonat();
+$('#mmWert').onchange=()=>loadMarkenMonat();
+$('#mmSuche').oninput=()=>mmMarkenListe();
+$('#mmAlle').onclick=()=>{MM_MARKEN.clear();mmMarkenListe();loadMarkenMonat()};
+$('#btnMmCsv').onclick=()=>{const d=S.last.mm; if(d)csv(d.monate,'neo-marken-je-monat.csv')};
+$('#btnMmArtikelCsv').onclick=()=>{const a=S.last.mmArtikel;
+  if(a)csv(a,'neo-artikel-'+(S.last.mmMonat||'')+'.csv')};
+
+/* ---- Ladenhüter (Artikel ohne Verkauf im Zeitraum) ---- */
+async function loadPenner(){
+  const f=filters(), wahl=$('#pZeitraum').value;
+  const bis=f.bis||iso(new Date());
+  let von;
+  if(wahl==='ytd')          von=bis.slice(0,4)+'-01-01';
+  else if(wahl==='filter')  von=f.von;
+  else von=iso(new Date(new Date(bis).getTime()-(+wahl-1)*864e5));
+  msg('#pMsg','Suche Ladenhüter…','info');
+  let d;
+  try{ d=await raw('/data/penner',{von,bis,nurBestand:$('#pBestand').value,
+        filiale:f.filiale,marke:f.marke,submarke:f.submarke,
+        warengruppe:f.warengruppe,lieferant:f.lieferant}); }
+  catch(e){ msg('#pMsg',e.message,'err'); return; }
+  msg('#pMsg','');
+  S.last.penner=d; S.last.pennerMarke=null;
+
+  const antArt=d.artikelMitBestand?(d.anzahl/d.artikelMitBestand*100):null;
+  const antKap=d.kapitalGesamt?(d.kapital/d.kapitalGesamt*100):null;
+  $('#pKpis').innerHTML=[
+    ['Artikel ohne Verkauf',nf0.format(d.anzahl),
+      antArt!=null?`${nf1.format(antArt)} % aller Artikel mit Bestand`:''],
+    ['Nie verkauft',nf0.format(d.nieVerkauft),'seit Beginn der Daten'],
+    ['Gebundenes Kapital',eur(d.kapital),
+      antKap!=null?`${nf1.format(antKap)} % des Lagerwerts`:''],
+    ['Bestand',nf0.format(d.bestandStueck)+' Stück',''],
+    ['Verkaufswert',eur(d.potenzial),'zum aktuellen VK'],
+    ['Betroffene Marken',nf0.format(d.marken.length),''],
+  ].map(([l,v,u])=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div>`
+    +`<div class="d"><span class="mut">${u}</span></div></div>`).join('');
+
+  $('#pMarkeInfo').textContent=`Zeitraum ${d.von} bis ${d.bis}`;
+  table('#tPennerMarke',d.marken,r=>[
+    ['w',esc(r.dim)],['num',nf0.format(r.artikel)],
+    ['num',r.nieVerkauft?nf0.format(r.nieVerkauft):'—'],
+    ['num',nf0.format(r.bestand)],['num',eur(r.kapital)],
+    ['num',nf1.format(r.anteil)+' %'],
+    ['',r.aeltester||'<span class="mut">nie</span>']],
+    r=>pennerArtikel(r.dim));
+  pennerArtikel(null);
+}
+function pennerArtikel(marke){
+  const d=S.last.penner; if(!d) return;
+  S.last.pennerMarke=marke;
+  const rows=marke?d.artikel.filter(a=>a.marke===marke):d.artikel;
+  $('#pArtikelInfo').textContent=marke
+    ? `${nf0.format(rows.length)} Artikel der Marke ${marke}`
+    : `${nf0.format(rows.length)} Artikel${d.anzahl>rows.length?` von ${nf0.format(d.anzahl)}`:''}`;
+  $('#btnPennerAlle').hidden=!marke;
+  table('#tPennerArtikel',rows,a=>[
+    ['num',a.artikelNr],['w',esc(a.bezeichnung)],['',esc(a.marke)],
+    ['',esc(a.warengruppe)],['num',nf0.format(a.bestand)],
+    ['num',a.ekPreis?eur2(a.ekPreis):'—'],['num',eur(a.kapital)],
+    ['',a.letzterVerkauf
+      ? `${a.letzterVerkauf} <span class="mut">(vor ${nf0.format(a.tageOhneVerkauf)} Tagen)</span>`
+      : '<span class="down">nie verkauft</span>']],
+    a=>artikelDetail(a.artikelNr));
+}
+$('#pZeitraum').onchange=()=>loadPenner();
+$('#pBestand').onchange=()=>loadPenner();
+$('#btnPennerAlle').onclick=()=>pennerArtikel(null);
+$('#btnPennerCsv').onclick=()=>{const d=S.last.penner; if(!d)return;
+  csv(S.last.pennerMarke?d.artikel.filter(a=>a.marke===S.last.pennerMarke):d.artikel,
+      'neo-ladenhueter.csv')};
+
 /* ---- Alerts ---- */
 async function loadAlerts(){
   const d=await raw('/data/alerts',{...filters(),schwelle:$('#aSchwelle').value,
@@ -2686,6 +2998,19 @@ function einstAnzeigen(){
       +(c.bestandSync?`<br>Bestand zuletzt ${c.bestandSync.replace('T',' ')}`:'')
       +(c.autosyncLetzter?`<br>Auto-Sync zuletzt ${c.autosyncLetzter.replace('T',' ')} (${c.autosyncStatus||'—'})`:'')
     : 'Noch keine Daten geladen.';
+  // Verbrauchte NEO-Aufrufe des laufenden Monats
+  const a=(S.dims&&S.dims.api)||null, box=$('#einstApi');
+  if(box){
+    box.innerHTML = a
+      ? `<b>${nf0.format(a.anzahl)}</b> von ${nf0.format(a.limit)} NEO-Aufrufen im Monat ${a.monat}`
+        +`<div class="bar" style="margin:8px 0 6px"><i style="width:${Math.min(100,a.anteil||0).toFixed(0)}%;`
+        +`background:${a.anteil>=90?'var(--bad)':a.anteil>=75?'var(--warn)':'var(--ok)'}"></i></div>`
+        +(a.gesperrt
+          ? '<span class="down">Limit erreicht — weitere Abrufe sind gesperrt. '
+            +'Setzt sich am Monatsanfang zurück.</span>'
+          : `noch ${nf0.format(a.rest)} frei`)
+      : 'Keine Angabe.';
+  }
 }
 function einstOeffnen(auf){
   $('#einstPanel').classList.toggle('auf',auf);

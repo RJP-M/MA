@@ -152,6 +152,9 @@ CREATE TABLE IF NOT EXISTS filiale(
 );
 
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
+
+-- Zaehler fuer die kostenpflichtigen NEO-Aufrufe, je Kalendermonat
+CREATE TABLE IF NOT EXISTS api_zaehler(monat TEXT PRIMARY KEY, anzahl INTEGER NOT NULL DEFAULT 0);
 """
 
 
@@ -195,6 +198,68 @@ class NeoError(Exception):
         self.status = status
 
 
+# ---------------------------------------------------------------- Aufrufbremse
+# Die NEO-API wird pro Aufruf abgerechnet (bis 1000 im Monat pauschal, darueber
+# je Aufruf). Damit ein Fehler -- eine Endlosschleife, ein versehentlich
+# mehrfach gestarteter Vollabruf -- nicht ins Geld geht, zaehlen wir jeden
+# Aufruf mit und stoppen hart am Monatslimit.
+API_LOCK = threading.Lock()
+
+
+def api_limit():
+    try:
+        return max(0, int(os.environ.get("NEO_API_LIMIT", "1000")))
+    except ValueError:
+        return 1000
+
+
+def api_monat():
+    return date.today().strftime("%Y-%m")
+
+
+def api_stand(con=None):
+    """Aufrufe des laufenden Monats, Limit und Restbudget."""
+    eigen = con is None
+    if eigen:
+        con = db()
+    try:
+        r = con.execute("SELECT anzahl FROM api_zaehler WHERE monat=?",
+                        (api_monat(),)).fetchone()
+        n = (r["anzahl"] if r else 0) or 0
+    except Exception:                                    # noqa: BLE001
+        n = 0
+    finally:
+        if eigen:
+            con.close()
+    grenze = api_limit()
+    return {"monat": api_monat(), "anzahl": n, "limit": grenze,
+            "rest": max(0, grenze - n) if grenze else None,
+            "anteil": (n / grenze * 100) if grenze else None,
+            "gesperrt": bool(grenze) and n >= grenze}
+
+
+def api_zaehlen():
+    """Einen Aufruf verbuchen. Gibt den neuen Stand zurueck, oder None wenn das
+    Monatslimit bereits erreicht ist (dann darf nicht gerufen werden)."""
+    grenze = api_limit()
+    with API_LOCK:
+        con = db()
+        try:
+            con.execute("INSERT INTO api_zaehler(monat,anzahl) VALUES(?,0) "
+                        "ON CONFLICT(monat) DO NOTHING", (api_monat(),))
+            r = con.execute("SELECT anzahl FROM api_zaehler WHERE monat=?",
+                            (api_monat(),)).fetchone()
+            n = (r["anzahl"] if r else 0) or 0
+            if grenze and n >= grenze:
+                return None
+            con.execute("UPDATE api_zaehler SET anzahl=anzahl+1 WHERE monat=?",
+                        (api_monat(),))
+            con.commit()
+            return n + 1
+        finally:
+            con.close()
+
+
 def neo_get(path, params=None, auth=None, accept="application/json", retries=4):
     """Ruft die NEO-API auf. auth = kompletter Authorization-Header."""
     url = CFG["target"].rstrip("/") + "/ws-api" + path
@@ -209,6 +274,18 @@ def neo_get(path, params=None, auth=None, accept="application/json", retries=4):
                 pairs.append((k, str(v).lower() if isinstance(v, bool) else str(v)))
         if pairs:
             url += "?" + urllib.parse.urlencode(pairs)
+
+    # Vor dem ersten Versuch das Monatsbudget pruefen und den Aufruf verbuchen.
+    # Wiederholungen wegen Rate-Limit (509) zaehlen als derselbe Aufruf.
+    stand = api_zaehlen()
+    if stand is None:
+        g = api_limit()
+        raise NeoError(429,
+                       "Monatslimit erreicht: %d von %d NEO-Aufrufen in %s verbraucht. "
+                       "Weitere Abrufe sind gesperrt, damit keine zusätzlichen Kosten "
+                       "entstehen. Das Limit setzt sich am Monatsanfang zurück; "
+                       "es lässt sich über NEO_API_LIMIT anheben."
+                       % (g, g, api_monat()))
 
     last = None
     for attempt in range(retries):
@@ -352,22 +429,27 @@ def sync_artikel(auth, full=False):
     return total
 
 
-def sync_umsatz(auth, von, bis, force=False):
+def sync_umsatz(auth, von, bis, force=False, tage=None):
     con = db()
     have = {r["datum"] for r in con.execute("SELECT datum FROM umsatz_tage")}
     con.close()
 
-    d0 = date.fromisoformat(von)
-    d1 = date.fromisoformat(bis)
-    days = []
-    d = d0
-    while d <= d1:
-        s = d.isoformat()
-        # Sonntage sind Schliesstage - nicht abfragen, das spart rund 14 %
-        # der Requests und damit Druck auf das Rate-Limit.
-        if (CFG["sonntag"] or d.weekday() != 6) and (force or s not in have):
-            days.append(s)
-        d += timedelta(days=1)
+    if tage:
+        # Ausdruecklich benannte Tage gezielt nachladen (z. B. Reparatur
+        # einzelner Tage, die zu frueh geholt wurden)
+        days = [t for t in tage if t]
+    else:
+        d0 = date.fromisoformat(von)
+        d1 = date.fromisoformat(bis)
+        days = []
+        d = d0
+        while d <= d1:
+            s = d.isoformat()
+            # Sonntage sind Schliesstage - nicht abfragen, das spart rund 14 %
+            # der Requests und damit Druck auf das Rate-Limit.
+            if (CFG["sonntag"] or d.weekday() != 6) and (force or s not in have):
+                days.append(s)
+            d += timedelta(days=1)
 
     job_start("Umsätze", len(days))
     for i, tag in enumerate(days, 1):
@@ -422,7 +504,7 @@ def sync_bestand(auth):
     return len(data)
 
 
-def run_sync(auth, von, bis, what):
+def run_sync(auth, von, bis, what, tage=None):
     try:
         if "filialen" in what:
             job_start("Filialen", 1)
@@ -435,7 +517,7 @@ def run_sync(auth, von, bis, what):
             job_step(note="%d Artikel" % n)
             job_end()
         if "umsatz" in what:
-            n = sync_umsatz(auth, von, bis, force=("umsatz_force" in what))
+            n = sync_umsatz(auth, von, bis, force=("umsatz_force" in what), tage=tage)
             job_step(note="%d Tage geladen" % n)
             job_end()
         if "bestand" in what:
@@ -1100,6 +1182,10 @@ def q_luecken(con, q):
     leer = [r["datum"] for r in con.execute(
         "SELECT datum FROM umsatz_tage WHERE datum BETWEEN ? AND ? AND positionen = 0 ORDER BY datum",
         (von, bis))]
+    # Verdaechtig sind leere Tage, die keine Sonntage sind: meist wurden sie zu
+    # frueh am Tag geholt, als noch nichts gebucht war. Die lassen sich gezielt
+    # noch einmal laden.
+    verdaechtig = [t for t in leer if date.fromisoformat(t).weekday() != 6]
     kalender = (d1 - date.fromisoformat(von)).days + 1
     gesamt = kalender - sonntage          # nur Verkaufstage sind relevant
     # Wurde an Sonntagen trotzdem gebucht? Meist ein angebundener Webshop.
@@ -1111,7 +1197,218 @@ def q_luecken(con, q):
             "geladen": gesamt - len(fehlend), "fehlend": len(fehlend),
             "abdeckung": (gesamt - len(fehlend)) / gesamt * 100 if gesamt else 0,
             "bloecke": bloecke[:200], "leereTage": leer[:200],
+            "verdaechtigeTage": verdaechtig[:200], "verdaechtig": len(verdaechtig),
             "sonntagsUmsatz": so["s"], "sonntageMitUmsatz": so["t"]}
+
+
+def q_markenmonat(con, q):
+    """Abverkauf ausgewaehlter Marken je Monat.
+
+    Ohne 'monat' kommen die Monatssummen samt Linie je Marke zurueck.
+    Mit 'monat=2026-07' die Artikel, die in genau diesem Monat verkauft wurden."""
+    bis = q.get("bis") or date.today().isoformat()
+    von = q.get("von") or (date.fromisoformat(bis) - timedelta(days=364)).isoformat()
+    marken = [m.strip() for m in (q.get("marken") or "").split(",") if m.strip()][:40]
+
+    bed, args = ["u.datum BETWEEN ? AND ?"], [von, bis]
+    if marken:
+        bed.append("COALESCE(a.marke,'(ohne Marke)') IN (%s)"
+                   % ",".join("?" * len(marken)))
+        args += marken
+    if q.get("filiale"):
+        bed.append("u.filialeNr = ?")
+        args.append(int(q["filiale"]))
+    if q.get("kanal"):
+        bed.append("u.kanal = ?")
+        args.append(q["kanal"])
+    if not sonntag_aktiv(q):
+        bed.append(SQL_KEIN_SONNTAG.format(t="u"))
+    where = " AND ".join(bed)
+
+    # --- Einzelmonat: welche Artikel liefen in diesem Monat?
+    monat = (q.get("monat") or "").strip()
+    if monat:
+        sql = """
+        SELECT u.artikelNr AS artikelNr, COALESCE(a.bezeichnung,'') AS bezeichnung,
+          COALESCE(a.marke,'(ohne Marke)') AS marke, COALESCE(a.submarke,'') AS submarke,
+          COALESCE(a.warengruppe,'') AS warengruppe, COALESCE(a.ekPreis,0) AS ekPreis,
+          {metrics}
+        {frm} WHERE {where} AND substr(u.datum,1,7) = ?
+        GROUP BY u.artikelNr ORDER BY brutto DESC
+        """.format(metrics=METRICS, frm=BASE_FROM, where=where)
+        artikel = [marge(dict(r)) for r in con.execute(sql, args + [monat])]
+        return {"monat": monat, "artikel": artikel, "anzahl": len(artikel),
+                "stueck": sum(a["stueck"] or 0 for a in artikel),
+                "brutto": sum(a["brutto"] or 0 for a in artikel),
+                "rohertrag": sum(a["rohertrag"] or 0 for a in artikel)}
+
+    # --- Monatsuebersicht
+    sql = """
+    SELECT substr(u.datum,1,7) AS monat, COALESCE(a.marke,'(ohne Marke)') AS marke,
+      {metrics}
+    {frm} WHERE {where}
+    GROUP BY monat, marke ORDER BY monat
+    """.format(metrics=METRICS, frm=BASE_FROM, where=where)
+
+    je_monat, je_marke, perioden = {}, {}, []
+    for r in con.execute(sql, args):
+        d = marge(dict(r))
+        p, m = r["monat"], r["marke"]
+        if p not in perioden:
+            perioden.append(p)
+        z = je_monat.setdefault(p, {"monat": p, "stueck": 0, "brutto": 0.0,
+                                    "netto": 0.0, "rohertrag": 0.0, "belege": 0,
+                                    "artikel": 0, "nettoMitEk": 0.0})
+        z["stueck"] += d["stueck"] or 0
+        z["brutto"] += d["brutto"] or 0
+        z["netto"] += d["netto"] or 0
+        z["rohertrag"] += d["rohertrag"] or 0
+        z["belege"] += d["belege"] or 0
+        z["artikel"] += d["artikel"] or 0
+        z["nettoMitEk"] += d.get("nettoMitEk") or 0
+        je_marke.setdefault(m, {})[p] = d
+
+    for z in je_monat.values():
+        z["marge"] = (z["rohertrag"] / z["nettoMitEk"] * 100) if z["nettoMitEk"] else None
+        z["bonwert"] = (z["brutto"] / z["belege"]) if z["belege"] else None
+
+    monate = [je_monat[p] for p in perioden]
+    # Veraenderung zum Vormonat und zum gleichen Monat im Vorjahr
+    for i, z in enumerate(monate):
+        vor = monate[i - 1] if i else None
+        z["pctVM"] = ((z["stueck"] / vor["stueck"] - 1) * 100) \
+            if (vor and vor["stueck"]) else None
+        vj = je_monat.get("%04d-%s" % (int(z["monat"][:4]) - 1, z["monat"][5:]))
+        z["stueckVJ"] = vj["stueck"] if vj else None
+        z["pctVJ"] = ((z["stueck"] / vj["stueck"] - 1) * 100) \
+            if (vj and vj["stueck"]) else None
+
+    serien = []
+    for m in sorted(je_marke, key=lambda k: -sum((v.get("brutto") or 0)
+                                                 for v in je_marke[k].values())):
+        serien.append({"dim": m,
+                       "werte": [(je_marke[m].get(p, {}).get("stueck") or 0)
+                                 for p in perioden],
+                       "umsatz": [(je_marke[m].get(p, {}).get("brutto") or 0)
+                                  for p in perioden],
+                       "summe": sum((v.get("brutto") or 0) for v in je_marke[m].values()),
+                       "stueckSumme": sum((v.get("stueck") or 0) for v in je_marke[m].values())})
+
+    return {"von": von, "bis": bis, "marken": marken, "perioden": perioden,
+            "monate": monate, "serien": serien,
+            "gesamt": {"stueck": sum(z["stueck"] for z in monate),
+                       "brutto": sum(z["brutto"] for z in monate),
+                       "rohertrag": sum(z["rohertrag"] for z in monate),
+                       "monate": len(monate)}}
+
+
+def q_penner(con, q):
+    """Ladenhueter: Artikel mit Bestand, die im Zeitraum kein einziges Mal
+    verkauft wurden -- nach Marke gebuendelt.
+
+    Das ist totes Kapital im Regal. Der Zeitraum ist frei waehlbar; mit dem
+    Jahresanfang als Startdatum sieht man, was dieses Jahr noch gar nicht
+    gelaufen ist."""
+    bis = q.get("bis") or date.today().isoformat()
+    von = q.get("von") or date(date.fromisoformat(bis).year, 1, 1).isoformat()
+    nur_bestand = q.get("nurBestand", "1") != "0"     # ohne Bestand meist uninteressant
+    filF = " AND b.filialeNr = %d" % int(q["filiale"]) if q.get("filiale") else ""
+
+    # Dimensionsfilter auf den Artikelstamm
+    dimcond, dimargs = [], []
+    for feld, spalte in (("marke", "a.marke"), ("submarke", "a.submarke"),
+                         ("warengruppe", "a.warengruppe"), ("lieferant", "a.lieferant")):
+        if q.get(feld):
+            dimcond.append("%s = ?" % spalte)
+            dimargs.append(q[feld])
+    dimwhere = (" AND " + " AND ".join(dimcond)) if dimcond else ""
+
+    sql = """
+    WITH lager AS (
+      SELECT b.artikelNr,
+             SUM(b.bestand) AS bestand,
+             SUM(COALESCE(b.reserviert,0)) AS reserviert
+      FROM bestand b WHERE 1=1 {filF}
+      GROUP BY b.artikelNr
+    ),
+    verkauf AS (
+      SELECT u.artikelNr, SUM(u.stueck) AS stueck, SUM(u.bruttoMitRabatt) AS umsatz
+      FROM umsatz u WHERE u.datum BETWEEN ? AND ?
+      GROUP BY u.artikelNr
+    ),
+    letzter AS (
+      SELECT artikelNr, MAX(datum) AS tag FROM umsatz GROUP BY artikelNr
+    )
+    SELECT a.artikelNr, COALESCE(a.bezeichnung,'') AS bezeichnung,
+      COALESCE(a.marke,'(ohne Marke)') AS marke,
+      COALESCE(a.submarke,'') AS submarke,
+      COALESCE(a.warengruppe,'') AS warengruppe,
+      COALESCE(a.lieferant,'') AS lieferant,
+      COALESCE(a.ekPreis,0) AS ekPreis, COALESCE(a.vkPreis,0) AS vkPreis,
+      COALESCE(l.bestand,0) AS bestand, COALESCE(l.reserviert,0) AS reserviert,
+      COALESCE(v.stueck,0) AS stueck, COALESCE(v.umsatz,0) AS umsatz,
+      lz.tag AS letzterVerkauf
+    FROM artikel a
+    LEFT JOIN lager l ON l.artikelNr = a.artikelNr
+    LEFT JOIN verkauf v ON v.artikelNr = a.artikelNr
+    LEFT JOIN letzter lz ON lz.artikelNr = a.artikelNr
+    WHERE COALESCE(v.stueck,0) = 0 {bestandF}{dimwhere}
+    """.format(filF=filF, dimwhere=dimwhere,
+               bestandF=" AND COALESCE(l.bestand,0) > 0" if nur_bestand else "")
+
+    heute = date.fromisoformat(bis)
+    artikel = []
+    for r in con.execute(sql, [von, bis] + dimargs):
+        d = dict(r)
+        d["kapital"] = (d["bestand"] or 0) * (d["ekPreis"] or 0)
+        d["potenzial"] = (d["bestand"] or 0) * (d["vkPreis"] or 0)
+        if d["letzterVerkauf"]:
+            d["tageOhneVerkauf"] = (heute - date.fromisoformat(d["letzterVerkauf"])).days
+        else:
+            d["tageOhneVerkauf"] = None       # noch nie verkauft
+        artikel.append(d)
+
+    # Nach Marke buendeln
+    marken = {}
+    for a in artikel:
+        m = marken.setdefault(a["marke"], {
+            "dim": a["marke"], "artikel": 0, "bestand": 0, "kapital": 0.0,
+            "potenzial": 0.0, "nieVerkauft": 0, "aeltester": None})
+        m["artikel"] += 1
+        m["bestand"] += a["bestand"] or 0
+        m["kapital"] += a["kapital"]
+        m["potenzial"] += a["potenzial"]
+        if a["letzterVerkauf"] is None:
+            m["nieVerkauft"] += 1
+        elif m["aeltester"] is None or a["letzterVerkauf"] < m["aeltester"]:
+            m["aeltester"] = a["letzterVerkauf"]
+
+    reihen = sorted(marken.values(), key=lambda r: -r["kapital"])
+    gesamt_kapital = sum(r["kapital"] for r in reihen)
+    for r in reihen:
+        r["anteil"] = (r["kapital"] / gesamt_kapital * 100) if gesamt_kapital else 0
+
+    # Vergleichsgroesse: wie viele Artikel mit Bestand gibt es ueberhaupt?
+    mit_bestand = con.execute(
+        "SELECT COUNT(DISTINCT b.artikelNr) n, COALESCE(SUM(b.bestand * "
+        "COALESCE(a.ekPreis,0)),0) k FROM bestand b "
+        "LEFT JOIN artikel a ON a.artikelNr=b.artikelNr "
+        "WHERE b.bestand > 0%s" % filF.replace(" AND b.filialeNr", " AND b.filialeNr")
+    ).fetchone()
+
+    artikel.sort(key=lambda r: -r["kapital"])
+    return {
+        "von": von, "bis": bis,
+        "marken": reihen,
+        "artikel": artikel[:2000],
+        "anzahl": len(artikel),
+        "bestandStueck": sum(a["bestand"] or 0 for a in artikel),
+        "kapital": gesamt_kapital,
+        "potenzial": sum(a["potenzial"] for a in artikel),
+        "nieVerkauft": sum(1 for a in artikel if a["letzterVerkauf"] is None),
+        "artikelMitBestand": mit_bestand["n"] or 0,
+        "kapitalGesamt": mit_bestand["k"] or 0.0,
+    }
 
 
 def q_kapital(con, q):
@@ -2478,6 +2775,7 @@ def q_dimensions(con):
             "autosyncLetzter": meta_get(con, "autosync_letzter"),
             "autosyncStatus": meta_get(con, "autosync_status"),
         },
+        "api": api_stand(con),
         "sonntag": {
             "beruecksichtigt": CFG["sonntag"],
             "tageMitUmsatz": so["t"], "umsatz": so["s"],
@@ -2897,9 +3195,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         what = set((q.get("what") or "filialen,artikel,umsatz,bestand").split(","))
         bis = q.get("bis") or date.today().isoformat()
         von = q.get("von") or (date.fromisoformat(bis) - timedelta(days=START_TAGE)).isoformat()
-        threading.Thread(target=run_sync, args=(auth, von, bis, what), daemon=True).start()
+        # Einzelne Tage gezielt nachladen, z. B. zum Reparieren leerer Tage
+        tage = [t.strip() for t in (q.get("tage") or "").split(",") if t.strip()]
+        tage = [t for t in tage if len(t) == 10 and t[4] == "-" and t[7] == "-"][:400] or None
+        threading.Thread(target=run_sync, args=(auth, von, bis, what, tage),
+                         daemon=True).start()
         return self.json_out(202, {"gestartet": True, "von": von, "bis": bis,
-                                   "what": sorted(what)})
+                                   "what": sorted(what),
+                                   "tage": len(tage) if tage else 0})
 
     def data(self, name, q):
         con = db()
@@ -2942,6 +3245,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.json_out(200, q_filialbenchmark(con, q))
             if name == "neuheiten":
                 return self.json_out(200, q_neuheiten(con, q))
+            if name == "penner":
+                return self.json_out(200, q_penner(con, q))
+            if name == "markenmonat":
+                return self.json_out(200, q_markenmonat(con, q))
             return self.json_out(404, {"error": "Unbekannt: " + name})
         finally:
             con.close()
@@ -3091,7 +3398,12 @@ def auto_sync_loop(uhrzeit, tage_zurueck):
         print("  [%s] Auto-Sync startet…" % datetime.now().strftime("%Y-%m-%d %H:%M"))
         err = None
         if auth:
-            run_sync(auth, von.isoformat(), bis.isoformat(), {"umsatz", "bestand", "artikel"})
+            # WICHTIG: umsatz_force. Ohne das Erzwingen wuerde der heutige Tag,
+            # der morgens um 6 Uhr noch fast leer ist, als "geladen" vermerkt
+            # und nie wieder geholt -- der Umsatz jedes Tages bliebe auf null.
+            # Deshalb wird das ganze Fenster jede Nacht neu geholt.
+            run_sync(auth, von.isoformat(), bis.isoformat(),
+                     {"umsatz", "umsatz_force", "bestand", "artikel"})
             with JOB_LOCK:
                 err = JOB["error"]
         shopify_nachziehen(von.isoformat(), bis.isoformat())

@@ -32,6 +32,12 @@ services:
       - key: START_TAGE
         value: "730"
 
+      # Harte Obergrenze für kostenpflichtige NEO-Aufrufe je Kalendermonat.
+      # Ist sie erreicht, lehnt der Server weitere Abrufe ab. Schützt vor
+      # unerwarteten Kosten, falls etwas aus dem Ruder läuft.
+      - key: NEO_API_LIMIT
+        value: "1000"
+
       # Signaturschlüssel für Sitzungen und Geräte-Tokens: einmalig zufällig erzeugt
       - key: SECRET_KEY
         generateValue: true
