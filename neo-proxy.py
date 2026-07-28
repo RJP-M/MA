@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Meister Parfümerie Dashboard — Backend
+Meister Parfumerie Dashboard — Backend
 
 Ein lokaler Server, der
   1. das Dashboard (neo-dashboard.html) ausliefert,
@@ -58,7 +58,7 @@ except Exception:              # noqa: BLE001
 
 # Fassung dieses Servers. Das Dashboard vergleicht sie mit seiner eigenen und
 # weist darauf hin, wenn eine der beiden Dateien beim Hochladen vergessen wurde.
-VERSION = "2026-07-28.58"
+VERSION = "2026-07-28.60"
 
 DEFAULT_TARGET = "https://portal.neo-wws.de/neo-server-prod"
 HERE = Path(__file__).resolve().parent
@@ -1267,10 +1267,20 @@ def q_markenmonat(con, q):
         GROUP BY u.artikelNr ORDER BY brutto DESC
         """.format(metrics=METRICS, frm=BASE_FROM, where=where)
         artikel = [marge(dict(r)) for r in con.execute(sql, args + [monat])]
+        # Summen fuer die Fusszeile. Sell-out = Umsatz mit Kunden,
+        # Sell-in = Wareneinsatz der verkauften Artikel (Stueck x EK).
+        s_brutto = sum(a["brutto"] or 0 for a in artikel)
+        s_ware = sum(a.get("wareneinsatz") or 0 for a in artikel)
+        s_rohertrag = sum(a["rohertrag"] or 0 for a in artikel)
+        s_nettoEk = sum(a.get("nettoMitEk") or 0 for a in artikel)
         return {"monat": monat, "artikel": artikel, "anzahl": len(artikel),
                 "stueck": sum(a["stueck"] or 0 for a in artikel),
-                "brutto": sum(a["brutto"] or 0 for a in artikel),
-                "rohertrag": sum(a["rohertrag"] or 0 for a in artikel)}
+                "brutto": s_brutto, "sellOut": s_brutto,
+                "wareneinsatz": s_ware, "sellIn": s_ware,
+                "rohertrag": s_rohertrag,
+                "marge": (s_rohertrag / s_nettoEk * 100) if s_nettoEk else None,
+                "ekAbdeckung": (s_nettoEk / sum(a["netto"] or 0 for a in artikel) * 100)
+                               if sum(a["netto"] or 0 for a in artikel) else None}
 
     # --- Uebersicht
     # Die Kurve laesst sich feiner aufloesen als die Tabelle: bei einem einzelnen
@@ -2328,7 +2338,7 @@ def jahres_pdf(con, q):
 
     b = Bericht("Jahresgespräch %d — %s" % (d["jahr"], partner),
                 "%s bis %s" % (d["von"], d["bis"]),
-                "Meister Parfümerie · erstellt am %s · Quelle NEO-WWS" % heute)
+                "Meister Parfumerie · erstellt am %s · Quelle NEO-WWS" % heute)
 
     # ---------- Deckblatt ----------
     b.seite(mit_kopf=False)
@@ -2733,7 +2743,7 @@ def wochenreport(con, ordner=None, bis=None):
     hoch = [x for x in alerts["alerts"] if x["schwere"] == "hoch"][:25]
 
     html = ["""<!doctype html><meta charset="utf-8">
-<title>Meister Parfümerie — Wochenreport %s</title>
+<title>Meister Parfumerie — Wochenreport %s</title>
 <style>
  body{font:13px/1.6 Inter,-apple-system,Segoe UI,Roboto,sans-serif;color:#0F172A;max-width:1000px;margin:32px auto;padding:0 24px}
  h1{font-size:22px;margin:0 0 4px} h2{font-size:14px;color:#0F172A;margin:34px 0 12px;border-bottom:1px solid #E7EAEF;padding-bottom:6px;font-weight:600}
@@ -2750,7 +2760,7 @@ def wochenreport(con, ordner=None, bis=None):
  footer{margin-top:40px;color:#57606a;font-size:11.5px;border-top:1px solid #d8dee4;padding-top:12px}
  @media print{body{margin:0}h2{page-break-after:avoid}}
 </style>
-<h1>Meister Parfümerie — Wochenreport</h1>
+<h1>Meister Parfumerie — Wochenreport</h1>
 <div class="sub">Berichtswoche %s bis %s &middot; Vorperiode %s bis %s &middot; Vorjahr %s bis %s</div>
 """ % (bis, von, bis, kpi["perioden"]["vorperiode"][0], kpi["perioden"]["vorperiode"][1],
        kpi["perioden"]["vorjahr"][0], kpi["perioden"]["vorjahr"][1])]
@@ -3521,7 +3531,7 @@ def auto_sync_loop(uhrzeit, tage_zurueck):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Meister Parfümerie Dashboard — Backend")
+    ap = argparse.ArgumentParser(description="Meister Parfumerie Dashboard — Backend")
     ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8080")),
                     help="Port. Standard aus Umgebungsvariable PORT (z. B. bei Render) oder 8080.")
     ap.add_argument("--target", default=DEFAULT_TARGET)
@@ -3564,7 +3574,7 @@ def main():
 
     host = args.host or ("0.0.0.0" if CFG["auth"] else "127.0.0.1")
 
-    print("Meister Parfümerie Dashboard — Backend")
+    print("Meister Parfumerie Dashboard — Backend")
     print("  Ziel      : %s" % CFG["target"])
     print("  Cache     : %s" % CFG["db"])
     print("  Pause     : %.1f s zwischen API-Requests" % CFG["delay"])

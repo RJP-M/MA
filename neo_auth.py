@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-neo_auth.py — Benutzeranmeldung für das Meister Parfümerie Dashboard.
+neo_auth.py — Benutzeranmeldung für das Meister Parfumerie Dashboard.
 
 Ausschließlich Python-Standardbibliothek. Keine Fremdpakete, damit keine
 zusätzliche Angriffsfläche entsteht und der Server ohne Installation läuft.
@@ -307,7 +307,7 @@ def vertrauen_pruefen(con, token, user_id):
 # Zwei-Faktor-Authentisierung (TOTP nach RFC 6238) — Standardbibliothek.
 # Kompatibel mit Google Authenticator, Microsoft Authenticator, Authy usw.
 # ============================================================================
-AUSGEBER = "Meister Parfümerie"
+AUSGEBER = "Meister Parfumerie"
 
 
 def totp_secret_neu():

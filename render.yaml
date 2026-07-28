@@ -1,4 +1,4 @@
-# Render Blueprint für das Meister Parfümerie Dashboard
+# Render Blueprint für das Meister Parfumerie Dashboard
 # ----------------------------------------------------
 # Legt automatisch einen Web-Dienst in Frankfurt (EU) mit persistentem
 # Datenträger für die Cache-Datenbank an. Nach dem Import in Render müssen nur
