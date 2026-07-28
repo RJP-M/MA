@@ -58,7 +58,7 @@ except Exception:              # noqa: BLE001
 
 # Fassung dieses Servers. Das Dashboard vergleicht sie mit seiner eigenen und
 # weist darauf hin, wenn eine der beiden Dateien beim Hochladen vergessen wurde.
-VERSION = "2026-07-28.55"
+VERSION = "2026-07-28.56"
 
 DEFAULT_TARGET = "https://portal.neo-wws.de/neo-server-prod"
 HERE = Path(__file__).resolve().parent
@@ -1233,21 +1233,25 @@ def q_markenmonat(con, q):
     trenner = q.get("sep") or ("|" if "|" in roh else ",")
     marken = [m.strip() for m in roh.split(trenner) if m.strip()][:40]
 
+    # Die Standardfilter (Filiale, Kanal, Sonntage, weitere Dimensionen) kommen
+    # aus where_clause -- sie kennt Feinheiten wie den Kanalwert "all" fuer
+    # „Alle Kanaele". Eigene Filterlogik hier waere fehleranfaellig.
     bed, args = ["u.datum BETWEEN ? AND ?"], [von, bis]
     if marken:
-        # Vergleich ueber die vereinheitlichte Schreibweise, damit Leerzeichen
-        # und Gross-/Kleinschreibung nicht stillschweigend zu null Treffern fuehren.
-        bed.append("norm_txt(COALESCE(a.marke,'(ohne Marke)')) IN (%s)"
-                   % ",".join("?" * len(marken)))
-        args += [norm_txt(m) for m in marken]
-    if q.get("filiale"):
-        bed.append("u.filialeNr = ?")
-        args.append(int(q["filiale"]))
-    if q.get("kanal"):
-        bed.append("u.kanal = ?")
-        args.append(q["kanal"])
-    if not sonntag_aktiv(q):
-        bed.append(SQL_KEIN_SONNTAG.format(t="u"))
+        # Die gewaehlten Namen zuerst im kleinen Artikelstamm auf die exakten
+        # Werte aufloesen (Leerzeichen, Gross-/Kleinschreibung egal). Danach
+        # laeuft der eigentliche Filter ohne Umwege auf der grossen Umsatztabelle.
+        echte = [r["marke"] for r in con.execute(
+            "SELECT DISTINCT marke FROM artikel WHERE norm_txt(marke) IN (%s)"
+            % ",".join("?" * len(marken)), [norm_txt(m) for m in marken])
+            if r["marke"] is not None]
+        werte = echte or marken
+        bed.append("COALESCE(a.marke,'(ohne Marke)') IN (%s)"
+                   % ",".join("?" * len(werte)))
+        args += werte
+    std_bed, std_args = where_clause(q)
+    bed += std_bed
+    args += std_args
     where = " AND ".join(bed)
 
     # --- Einzelmonat: welche Artikel liefen in diesem Monat?
@@ -1340,12 +1344,13 @@ def q_markenmonat(con, q):
         zeitraum = con.execute(
             "SELECT COUNT(*) n FROM umsatz WHERE datum BETWEEN ? AND ?",
             (von, bis)).fetchone()["n"]
-        # Gab es zu dieser Marke ueberhaupt jemals Verkaeufe?
+        # Gab es zu dieser Marke ueberhaupt jemals Verkaeufe? Bewusst mit
+        # denselben Filtern wie oben, nur ohne Datumsgrenze -- sonst koennte
+        # die Meldung dem Ergebnis widersprechen.
+        ohne_datum = [b for b in bed if not b.startswith("u.datum BETWEEN")]
         je = con.execute(
-            "SELECT COUNT(*) n, MIN(u.datum) erster, MAX(u.datum) letzter "
-            "FROM umsatz u LEFT JOIN artikel a ON a.artikelNr = u.artikelNr "
-            "WHERE norm_txt(COALESCE(a.marke,'(ohne Marke)')) IN (%s)" % platz,
-            norm).fetchone()
+            "SELECT COUNT(*) n, MIN(u.datum) erster, MAX(u.datum) letzter %s WHERE %s"
+            % (BASE_FROM, " AND ".join(ohne_datum) or "1=1"), args[2:]).fetchone()
         namen = ", ".join(marken)
         if not zeitraum:
             erg["hinweis"] = ("Im Zeitraum %s bis %s sind überhaupt keine Umsätze "

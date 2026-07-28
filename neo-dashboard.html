@@ -717,7 +717,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <h3>Über</h3>
       <div class="info">
         <b>Meister Parfümerie Dashboard</b><br>
-        Version <span id="einstVersion">v2026-07-28.55</span><br>
+        Version <span id="einstVersion">v2026-07-28.56</span><br>
         Datenquelle NEO-WWS über die lokale Zwischenablage <code>neo-cache.db</code>.
       </div>
       <div class="row" style="margin-top:14px">
@@ -1733,7 +1733,7 @@ $('#btnSync').onclick=async()=>{
 // Fassung, die dieses Dashboard vom Server erwartet. Stimmen die beiden nicht
 // überein, wurde beim Hochladen eine der Dateien vergessen — das ist die
 // häufigste Ursache für „Funktion tut nichts".
-const SERVER_ERWARTET='2026-07-28.55';
+const SERVER_ERWARTET='2026-07-28.56';
 function versionPruefen(){
   const el=$('#versionWarnung'); if(!el) return;
   const v=(S.dims&&S.dims.version)||null;
