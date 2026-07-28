@@ -1208,11 +1208,18 @@ def q_markenmonat(con, q):
     Mit 'monat=2026-07' die Artikel, die in genau diesem Monat verkauft wurden."""
     bis = q.get("bis") or date.today().isoformat()
     von = q.get("von") or (date.fromisoformat(bis) - timedelta(days=364)).isoformat()
-    marken = [m.strip() for m in (q.get("marken") or "").split(",") if m.strip()][:40]
+    # Mehrere Marken kommen mit | getrennt (Komma waere unsicher, weil
+    # Markennamen selbst Kommas enthalten koennen). Aeltere Aufrufe mit Komma
+    # funktionieren weiterhin.
+    roh = q.get("marken") or ""
+    trenner = q.get("sep") or ("|" if "|" in roh else ",")
+    marken = [m.strip() for m in roh.split(trenner) if m.strip()][:40]
 
     bed, args = ["u.datum BETWEEN ? AND ?"], [von, bis]
     if marken:
-        bed.append("COALESCE(a.marke,'(ohne Marke)') IN (%s)"
+        # Auf beiden Seiten trimmen: in der Warenwirtschaft haengen an
+        # Markennamen haeufig Leerzeichen, sonst greift der Filter ins Leere.
+        bed.append("TRIM(COALESCE(a.marke,'(ohne Marke)')) IN (%s)"
                    % ",".join("?" * len(marken)))
         args += marken
     if q.get("filiale"):
@@ -1230,7 +1237,8 @@ def q_markenmonat(con, q):
     if monat:
         sql = """
         SELECT u.artikelNr AS artikelNr, COALESCE(a.bezeichnung,'') AS bezeichnung,
-          COALESCE(a.marke,'(ohne Marke)') AS marke, COALESCE(a.submarke,'') AS submarke,
+          TRIM(COALESCE(a.marke,'(ohne Marke)')) AS marke,
+          COALESCE(a.submarke,'') AS submarke,
           COALESCE(a.warengruppe,'') AS warengruppe, COALESCE(a.ekPreis,0) AS ekPreis,
           {metrics}
         {frm} WHERE {where} AND substr(u.datum,1,7) = ?
@@ -1244,7 +1252,8 @@ def q_markenmonat(con, q):
 
     # --- Monatsuebersicht
     sql = """
-    SELECT substr(u.datum,1,7) AS monat, COALESCE(a.marke,'(ohne Marke)') AS marke,
+    SELECT substr(u.datum,1,7) AS monat,
+      TRIM(COALESCE(a.marke,'(ohne Marke)')) AS marke,
       {metrics}
     {frm} WHERE {where}
     GROUP BY monat, marke ORDER BY monat

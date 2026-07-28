@@ -711,7 +711,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <h3>Über</h3>
       <div class="info">
         <b>Meister Parfümerie Dashboard</b><br>
-        Version <span id="einstVersion">v2026-07-28.50</span><br>
+        Version <span id="einstVersion">v2026-07-28.52</span><br>
         Datenquelle NEO-WWS über die lokale Zwischenablage <code>neo-cache.db</code>.
       </div>
       <div class="row" style="margin-top:14px">
@@ -1037,8 +1037,7 @@ body:not(.servermodus) .nur-server{display:none!important}
       <div class="kpis" id="dKpis"></div>
       <div class="card"><h2>Datenlücken <span class="r">
         <button class="ghost sm" id="btnLuecken">Neu prüfen</button>
-        <button class="sm" id="btnNachladen">Fehlende Tage nachladen</button>
-        <button class="ghost sm" id="btnLeereNeu" hidden>Leere Tage neu laden</button></span></h2>
+        <button class="sm" id="btnNachladen">Fehlende Tage nachladen</button></span></h2>
         <div class="msg" id="dMsg"></div>
         <div class="scroll sm"><table id="tLuecken"><thead><tr>
           <th>Von</th><th>Bis</th><th class="num">Tage</th></tr></thead><tbody></tbody></table></div>
@@ -1098,6 +1097,7 @@ body:not(.servermodus) .nur-server{display:none!important}
           <option value="marke">Marke</option><option value="submarke">Submarke</option>
           <option value="warengruppe">Warengruppe</option><option value="lieferant">Lieferant</option>
         </select></span></h2>
+        <div class="msg" id="wMsg"></div>
         <div class="hint">Das gewählte Fenster endet am Bis-Datum und wird gegen die unmittelbar davorliegende Periode gleicher Länge sowie gegen das Vorjahr verglichen. <b>Kumuliert</b> summiert den Umsatz vom Fensterbeginn auf — der Abstand zwischen den Linien ist der Vorsprung bzw. Rückstand in Euro. <b>Gleitender Ø</b> glättet den Wochenrhythmus heraus.</div>
       </div>
       <div id="wWrap"></div>
@@ -1768,7 +1768,9 @@ $('#btnReset').onclick=()=>{['#fFil','#fMarke','#fSubmarke','#fWg','#fLief'].for
 $('#rDim').onchange=()=>loadRanking(); $('#mDim').onchange=()=>loadMarge();
 $('#wDim').onchange=()=>loadWindows();
 $('#wFenster').onchange=()=>loadWindows();
-$('#wAnsicht').onchange=()=>{const d=S.last.windows,w=$('#wFenster').value; if(d&&d[w])zeichneFenster(w,d[w])};
+$('#wAnsicht').onchange=()=>{const d=S.last.windows; if(!d)return;
+  const w=d[$('#wFenster').value]?$('#wFenster').value:Object.keys(d).find(k=>d[k]&&d[k].serie);
+  if(w)zeichneFenster(w,d[w])};
 $('#bTage').onchange=$('#bView').onchange=()=>loadBestand();
 $('#btnAlerts').onclick=()=>loadAlerts(); $('#aSchwere').onchange=()=>loadAlerts();
 
@@ -2137,9 +2139,12 @@ async function loadLuecken(){
     ['Tage ohne Umsatz',nf0.format(d.leereTage.length)],
     ['davon verdächtig',nf0.format(d.verdaechtig||0)]]
     .map(([l,v])=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
-  // Leere Werktage sind fast immer zu früh geholt worden — gezielt reparierbar
-  $('#btnLeereNeu').hidden = !(d.verdaechtig>0);
-  if(d.verdaechtig>0) $('#btnLeereNeu').textContent=`${d.verdaechtig} leere Tage neu laden`;
+  // Knopfbeschriftung sagt, was tatsächlich zu tun ist
+  const zuTun=(d.fehlend||0)+(d.verdaechtig||0);
+  $('#btnNachladen').textContent = zuTun
+    ? `${nf0.format(zuTun)} Tage nachladen`
+    : 'Fehlende Tage nachladen';
+  $('#btnNachladen').disabled = !zuTun;
   $('#tLuecken tbody').innerHTML=d.bloecke.map(b=>
     `<tr><td>${b.von}</td><td>${b.bis}</td><td class="num">${b.tage}</td></tr>`).join('')
     ||'<tr><td colspan="3" class="flat">Keine Lücken im geprüften Zeitraum.</td></tr>';
@@ -2151,38 +2156,30 @@ async function loadLuecken(){
 $('#btnLuecken').onclick=()=>loadLuecken();
 $('#btnNachladen').onclick=async()=>{
   if(!SERVERMODUS && !S.auth){msg('#dMsg','Zum Nachladen erst unter „Zugang" verbinden.','err');return}
-  const d=S.last.luecken; if(!d||!d.fehlend){msg('#dMsg','Nichts nachzuladen.','ok');return}
+  const d=S.last.luecken;
+  const leer=(d&&d.verdaechtigeTage)||[];
+  if(!d||(!d.fehlend&&!leer.length)){msg('#dMsg','Nichts nachzuladen.','ok');return}
   $('#btnNachladen').disabled=true;
   try{
-    await fetch(location.origin+'/sync/start?'+new URLSearchParams({von:d.von,bis:d.bis,what:'umsatz'}),
-      SERVERMODUS?{}:{headers:{'Authorization':'Basic '+S.auth}});
-    let run=true;
-    while(run){ await sleep(1000); const st=await raw('/sync/status');
-      msg('#dMsg','Lade '+st.done+'/'+st.total+' '+(st.log.slice(-1)[0]||''),'info');
-      if(!st.running){run=false; msg('#dMsg',st.error?'Abbruch: '+st.error:'Fertig.',st.error?'err':'ok')} }
+    // Erst die echten Lücken über den Zeitraum, danach die leer geladenen Tage
+    if(d.fehlend) await syncLauf({von:d.von,bis:d.bis,what:'umsatz'},'Fehlende Tage');
+    if(leer.length) await syncLauf({what:'umsatz',tage:leer.join(',')},'Leere Tage');
     await loadDims(); await loadLuecken();
+    msg('#dMsg','Fertig.','ok');
   }catch(e){msg('#dMsg',e.message,'err')}
   $('#btnNachladen').disabled=false;
 };
-// Leere Werktage gezielt noch einmal holen. Solche Tage entstehen, wenn ein
-// Tag zu früh abgerufen wurde, als noch kein Umsatz gebucht war.
-$('#btnLeereNeu').onclick=async()=>{
-  if(!SERVERMODUS && !S.auth){msg('#dMsg','Zum Nachladen erst unter „Zugang" verbinden.','err');return}
-  const d=S.last.luecken, tage=(d&&d.verdaechtigeTage)||[];
-  if(!tage.length){msg('#dMsg','Nichts zu reparieren.','ok');return}
-  $('#btnLeereNeu').disabled=true;
-  try{
-    await fetch(location.origin+'/sync/start?'+new URLSearchParams(
-      {what:'umsatz',tage:tage.join(',')}),
-      SERVERMODUS?{}:{headers:{'Authorization':'Basic '+S.auth}});
-    let run=true;
-    while(run){ await sleep(1000); const st=await raw('/sync/status');
-      msg('#dMsg','Lade '+st.done+'/'+st.total+' '+(st.log.slice(-1)[0]||''),'info');
-      if(!st.running){run=false; msg('#dMsg',st.error?'Abbruch: '+st.error:'Fertig.',st.error?'err':'ok')} }
-    await loadDims(); await loadLuecken();
-  }catch(e){msg('#dMsg',e.message,'err')}
-  $('#btnLeereNeu').disabled=false;
-};
+/* Einen Sync anstoßen und warten, bis er durch ist */
+async function syncLauf(params,titel){
+  await fetch(location.origin+'/sync/start?'+new URLSearchParams(params),
+    SERVERMODUS?{}:{headers:{'Authorization':'Basic '+S.auth}});
+  for(;;){
+    await sleep(1000);
+    const st=await raw('/sync/status');
+    msg('#dMsg',`${titel}: ${st.done}/${st.total} ${st.log.slice(-1)[0]||''}`,'info');
+    if(!st.running){ if(st.error) throw new Error('Abbruch: '+st.error); return; }
+  }
+}
 $('#btnBackup').onclick=async()=>{
   msg('#rMsg','Sichere…','info');
   try{const b=await raw('/backup');
@@ -2214,9 +2211,26 @@ async function loadRanking(){
 
 /* ---- Fenster ---- */
 async function loadWindows(){
-  const dim=$('#wDim').value, fenster=$('#wFenster').value;
-  const d=await raw('/data/windows',{...filters(),dim,fenster});
+  const dim=$('#wDim').value;
+  let fenster=$('#wFenster').value;
+  msg('#wMsg','Lade…','info');
+  let d;
+  try{ d=await raw('/data/windows',{...filters(),dim,fenster}); }
+  catch(e){ msg('#wMsg',e.message,'err'); return; }
   S.last.windows=d;
+  // Liefert der Server das gewünschte Fenster nicht, läuft dort noch eine
+  // ältere Fassung. Das sagen wir deutlich, statt stumm die alte Karte
+  // stehen zu lassen.
+  if(!d[fenster]){
+    const da=Object.keys(d).filter(k=>d[k]&&d[k].serie);
+    if(!da.length){ msg('#wMsg','Für diesen Zeitraum liegen keine Daten vor.','info');
+      $('#wWrap').innerHTML=''; return; }
+    const ersatz=da.sort((a,b)=>Math.abs(a-fenster)-Math.abs(b-fenster))[0];
+    msg('#wMsg',`Der Server kennt das ${fenster}-Tage-Fenster noch nicht und hat `
+      +`${ersatz} Tage geliefert. Bitte die aktuelle neo-proxy.py hochladen — `
+      +`danach lassen sich alle Zeiträume wählen.`,'err');
+    fenster=ersatz;
+  } else msg('#wMsg','');
   $('#wWrap').innerHTML=[fenster].map(w=>{
     const b=d[w],rows=b.rows,ges=rows.reduce((s,r)=>s+(r.cur||0),0);
     const up=[...rows].filter(r=>r.prev>0).sort((x,y)=>(y.pct??-1e9)-(x.pct??-1e9)).slice(0,8);
@@ -2543,7 +2557,7 @@ async function loadMarkenMonat(){
   else { const d=new Date(bis); d.setMonth(d.getMonth()-(+wahl-1)); d.setDate(1); von=iso(d); }
   msg('#mmMsg','Lade…','info');
   let d;
-  try{ d=await raw('/data/markenmonat',{von,bis,marken:[...MM_MARKEN].join(','),
+  try{ d=await raw('/data/markenmonat',{von,bis,marken:[...MM_MARKEN].join('|'),sep:'|',
         filiale:f.filiale,kanal:f.kanal}); }
   catch(e){ msg('#mmMsg',e.message,'err'); return; }
   msg('#mmMsg','');
@@ -2584,7 +2598,7 @@ async function mmArtikel(monat){
   $('#mmArtikelInfo').textContent='Lade '+monat+'…';
   let r;
   try{ r=await raw('/data/markenmonat',{von:d.von,bis:d.bis,monat,
-        marken:[...MM_MARKEN].join(','),filiale:f.filiale,kanal:f.kanal}); }
+        marken:[...MM_MARKEN].join('|'),sep:'|',filiale:f.filiale,kanal:f.kanal}); }
   catch(e){ $('#mmArtikelInfo').textContent=e.message; return; }
   S.last.mmMonat=monat; S.last.mmArtikel=r.artikel;
   const MN=['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
