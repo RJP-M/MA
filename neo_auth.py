@@ -22,6 +22,7 @@ import hmac
 import os
 import secrets
 import struct
+import threading
 import time
 import urllib.parse
 from datetime import datetime
@@ -29,6 +30,47 @@ from datetime import datetime
 # scrypt-Parameter (bewusst kräftig, für Login unkritisch bei der Laufzeit)
 _SCRYPT = dict(n=16384, r=8, p=1, dklen=32)
 SESSION_STUNDEN = 12          # Gültigkeit eines Tokens, sofern nicht anders gesetzt
+
+
+# ----------------------------------------------------- Schutz vor Durchprobieren
+# Passwörter und 2FA-Codes lassen sich sonst unbegrenzt durchprobieren — bei
+# einem 6-stelligen Code reichen dafür wenige Stunden. Nach zu vielen
+# Fehlversuchen wird das Konto kurz gesperrt (nur im Arbeitsspeicher; ein
+# Neustart setzt die Zähler zurück, das ist für diesen Zweck ausreichend).
+MAX_FEHLVERSUCHE = 8
+SPERRE_SEKUNDEN = 300
+_VERSUCHE = {}                # schluessel -> [anzahl, gesperrt_bis]
+_VERSUCHE_LOCK = threading.Lock()
+
+
+def _sperre_aktiv(schluessel):
+    with _VERSUCHE_LOCK:
+        eintrag = _VERSUCHE.get(schluessel)
+        if not eintrag:
+            return 0
+        rest = eintrag[1] - time.time()
+        if rest <= 0 and eintrag[0] >= MAX_FEHLVERSUCHE:
+            del _VERSUCHE[schluessel]     # Sperre abgelaufen: Zähler zurücksetzen
+            return 0
+        return int(rest) if (rest > 0 and eintrag[0] >= MAX_FEHLVERSUCHE) else 0
+
+
+def _fehlversuch(schluessel):
+    with _VERSUCHE_LOCK:
+        eintrag = _VERSUCHE.setdefault(schluessel, [0, 0])
+        eintrag[0] += 1
+        if eintrag[0] >= MAX_FEHLVERSUCHE:
+            eintrag[1] = time.time() + SPERRE_SEKUNDEN
+
+
+def _versuche_zuruecksetzen(schluessel):
+    with _VERSUCHE_LOCK:
+        _VERSUCHE.pop(schluessel, None)
+
+
+def sperre_sekunden(email):
+    """Restdauer einer Login-Sperre in Sekunden (0 = nicht gesperrt)."""
+    return _sperre_aktiv("pw:" + (email or "").strip().lower())
 
 
 # --------------------------------------------------------------------------- DB
@@ -196,13 +238,18 @@ def admin_bootstrap(con):
 def pruefen(con, email, passwort):
     """Gibt bei Erfolg das Nutzer-Dict zurück, sonst None."""
     email = (email or "").strip().lower()
+    if _sperre_aktiv("pw:" + email):
+        return None
     row = con.execute("SELECT * FROM app_user WHERE email=?", (email,)).fetchone()
     if not row or not row["aktiv"]:
         # Auch bei unbekanntem Nutzer einmal hashen, um Zeitmessung zu erschweren
         _hash(passwort or "", secrets.token_hex(16))
+        _fehlversuch("pw:" + email)
         return None
     if not _passwort_pruefen(row, passwort or ""):
+        _fehlversuch("pw:" + email)
         return None
+    _versuche_zuruecksetzen("pw:" + email)
     con.execute("UPDATE app_user SET letzter_login=? WHERE id=?",
                 (datetime.now().isoformat(timespec="seconds"), row["id"]))
     con.commit()
@@ -215,9 +262,20 @@ def pruefen(con, email, passwort):
 
 
 # -------------------------------------------------------------------- Sitzungen
+def _salt_fingerabdruck(con, pass_salt):
+    """Kurzer Fingerabdruck des Passwort-Salts. Er wandert mit ins Token:
+    Ändert sich das Passwort (und damit der Salt), werden alle bestehenden
+    Sitzungen dieses Kontos sofort ungültig — vorher blieben gestohlene
+    Tokens auch nach einem Passwortwechsel bis zu 12 Stunden gültig."""
+    return hmac.new(signaturschluessel(con), (pass_salt or "").encode("utf-8"),
+                    hashlib.sha256).hexdigest()[:12]
+
+
 def token_erzeugen(con, user_id, stunden=SESSION_STUNDEN):
+    r = con.execute("SELECT pass_salt FROM app_user WHERE id=?", (user_id,)).fetchone()
+    fp = _salt_fingerabdruck(con, r["pass_salt"] if r else "")
     ablauf = int(time.time()) + stunden * 3600
-    payload = "%d.%d" % (user_id, ablauf)
+    payload = "%d.%d.%s" % (user_id, ablauf, fp)
     sig = hmac.new(signaturschluessel(con), payload.encode("utf-8"),
                    hashlib.sha256).hexdigest()
     roh = "%s.%s" % (payload, sig)
@@ -231,8 +289,8 @@ def token_pruefen(con, token):
         return None
     try:
         roh = base64.urlsafe_b64decode(token.encode("ascii")).decode("utf-8")
-        uid_s, abl_s, sig = roh.split(".")
-        payload = "%s.%s" % (uid_s, abl_s)
+        uid_s, abl_s, fp, sig = roh.split(".")
+        payload = "%s.%s.%s" % (uid_s, abl_s, fp)
     except Exception:
         return None
     erwartet = hmac.new(signaturschluessel(con), payload.encode("utf-8"),
@@ -241,10 +299,12 @@ def token_pruefen(con, token):
         return None
     if int(abl_s) < int(time.time()):
         return None
-    row = con.execute("SELECT id,email,name,rolle,aktiv,totp_aktiv,pw_wechsel "
+    row = con.execute("SELECT id,email,name,rolle,aktiv,totp_aktiv,pw_wechsel,pass_salt "
                       "FROM app_user WHERE id=?", (int(uid_s),)).fetchone()
     if not row or not row["aktiv"]:
         return None
+    if not hmac.compare_digest(_salt_fingerabdruck(con, row["pass_salt"]), fp):
+        return None                     # Passwort wurde inzwischen geändert
     twofa = bool(row["totp_aktiv"])
     mussPw = bool(row["pw_wechsel"])
     return {"id": row["id"], "email": row["email"], "name": row["name"],
@@ -382,6 +442,16 @@ def zweifa_aus(con, user_id):
 
 
 def zweifa_login_pruefen(con, user_id, code):
-    """Prüft den 6-stelligen Code beim Login gegen das aktive Geheimnis."""
+    """Prüft den 6-stelligen Code beim Login gegen das aktive Geheimnis.
+    Nach zu vielen Fehlversuchen wird kurz gesperrt (6-stellige Codes sind
+    sonst in vertretbarer Zeit durchprobierbar)."""
+    schluessel = "2fa:%d" % int(user_id)
+    if _sperre_aktiv(schluessel):
+        return False
     r = con.execute("SELECT totp_secret FROM app_user WHERE id=?", (user_id,)).fetchone()
-    return bool(r and r["totp_secret"] and totp_pruefen(r["totp_secret"], code))
+    ok = bool(r and r["totp_secret"] and totp_pruefen(r["totp_secret"], code))
+    if ok:
+        _versuche_zuruecksetzen(schluessel)
+    else:
+        _fehlversuch(schluessel)
+    return ok

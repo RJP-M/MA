@@ -1745,7 +1745,7 @@ $('#btnSync').onclick=async()=>{
 // Fassung, die dieses Dashboard vom Server erwartet. Stimmen die beiden nicht
 // überein, wurde beim Hochladen eine der Dateien vergessen — das ist die
 // häufigste Ursache für „Funktion tut nichts".
-const SERVER_ERWARTET='2026-07-28.60';
+const SERVER_ERWARTET='2026-08-06.61';
 function versionPruefen(){
   const el=$('#versionWarnung'); if(!el) return;
   const v=(S.dims&&S.dims.version)||null;
@@ -1773,12 +1773,19 @@ async function loadDims(){
   fill('#fWg',S.dims.warengruppen.map(m=>[m,m])); fill('#fLief',S.dims.lieferanten.map(m=>[m,m]));
   if(c.umsatzTage){
     $('#app').classList.remove('hide'); $('#cfgCard').classList.add('hide'); $('#syncCard').classList.add('hide');
-    if(!$('#fBis').value){   // Standardzeitraum aus den Einstellungen
+    // Zeitraum automatisch nachziehen: Solange „bis" nicht von Hand verstellt
+    // wurde, rückt das Ende mit den frisch geladenen Daten mit. Früher wurde
+    // das Datum nur beim allerersten Laden gesetzt und blieb dann stehen —
+    // das Dashboard wirkte eingefroren, obwohl der nächtliche Abgleich längst
+    // neue Tage geliefert hatte.
+    if(!$('#fBis').value || !S.bisManuell){
       $('#fBis').value=c.umsatzBis;
-      const e=new Date(c.umsatzBis), z=EIN.zeitraum;
-      $('#fVon').value = z==='ytd' ? c.umsatzBis.slice(0,4)+'-01-01'
-        : z==='mtd' ? iso(new Date(e.getFullYear(),e.getMonth(),1))
-        : iso(new Date(e.getTime()-(+z-1)*864e5));
+      if(!S.vonManuell){
+        const e=new Date(c.umsatzBis), z=EIN.zeitraum;
+        $('#fVon').value = z==='ytd' ? c.umsatzBis.slice(0,4)+'-01-01'
+          : z==='mtd' ? iso(new Date(e.getFullYear(),e.getMonth(),1))
+          : iso(new Date(e.getTime()-(+z-1)*864e5));
+      }
     }
     refresh(); loadAlertBadge();
   } else {
@@ -1805,7 +1812,12 @@ $('#fQuick').onchange=()=>{const v=$('#fQuick').value;if(!v)return;
   if(v==='ytd')$('#fVon').value=iso(new Date(e.getFullYear(),0,1));
   else if(v==='mtd')$('#fVon').value=iso(new Date(e.getFullYear(),e.getMonth(),1));
   else $('#fVon').value=iso(new Date(e.getTime()-(+v-1)*864e5));
+  // Schnellauswahl ist relativ zum Datenstand — ab jetzt wieder automatisch mitwandern
+  S.vonManuell=S.bisManuell=false;
   $('#fBis').value=bis; refresh()};
+// Von Hand gesetzte Daten nicht mehr automatisch überschreiben
+$('#fVon').onchange=()=>{S.vonManuell=true};
+$('#fBis').onchange=()=>{S.bisManuell=true};
 $('#btnApply').onclick=()=>refresh();
 $('#btnReset').onclick=()=>{['#fFil','#fMarke','#fSubmarke','#fWg','#fLief'].forEach(s=>$(s).value='');$('#fKanal').value='all';refresh()};
 ['#fFil','#fKanal','#fMarke','#fSubmarke','#fWg','#fLief'].forEach(s=>$(s).onchange=()=>refresh());
@@ -3102,6 +3114,7 @@ function einstAnzeigen(){
       +(c.artikelSync?`<br>Artikelstamm zuletzt ${c.artikelSync.replace('T',' ')}`:'')
       +(c.bestandSync?`<br>Bestand zuletzt ${c.bestandSync.replace('T',' ')}`:'')
       +(c.autosyncLetzter?`<br>Auto-Sync zuletzt ${c.autosyncLetzter.replace('T',' ')} (${c.autosyncStatus||'—'})`:'')
+      +(c.shopifyFehler?`<br><span class="down">Onlineshop-Abruf zuletzt fehlgeschlagen: ${esc(c.shopifyFehler)}</span>`:'')
     : 'Noch keine Daten geladen.';
   // Verbrauchte NEO-Aufrufe des laufenden Monats
   const a=(S.dims&&S.dims.api)||null, box=$('#einstApi');

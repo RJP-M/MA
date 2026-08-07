@@ -31,15 +31,22 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import date, datetime, timedelta
 
 API_VERSION_STD = "2026-07"
 TIMEOUT = 30
 
-# Kleiner Zwischenspeicher, damit mehrfaches Öffnen des Tabs nicht jedes Mal
-# bei Shopify anfragt. Shopify drosselt Abfragen, und die Zahlen ändern sich
-# nicht sekündlich.
-_CACHE = {}
-CACHE_SEKUNDEN = 900          # 15 Minuten
+# Zeitstempel in deutscher Zeit (der Server läuft z. B. auf Render in UTC)
+try:
+    from zoneinfo import ZoneInfo
+    _TZ_DE = ZoneInfo("Europe/Berlin")
+except Exception:                                       # noqa: BLE001
+    _TZ_DE = None
+
+
+def _zeitstempel():
+    n = datetime.now(_TZ_DE) if _TZ_DE else datetime.now()
+    return n.strftime("%Y-%m-%d %H:%M:%S")
 
 
 class ShopifyFehler(Exception):
@@ -294,7 +301,8 @@ def stand(con):
     except Exception:                                       # noqa: BLE001
         return {"tage": 0, "von": None, "bis": None, "sync": None}
     return {"tage": r["n"] or 0, "von": r["a"], "bis": r["b"],
-            "sync": _meta_lesen(con, "shopify_sync")}
+            "sync": _meta_lesen(con, "shopify_sync"),
+            "fehler": _meta_lesen(con, "shopify_sync_fehler") or None}
 
 
 # ------------------------------------------------------------------ Abholen
@@ -320,11 +328,34 @@ def _dim_reihe(abfrage, feld):
     return raus
 
 
+CHUNK_TAGE = 31
+
+
 def sync(con, von, bis):
     """Holt alle Onlineshop-Zahlen des Zeitraums und legt sie in der Datenbank ab.
 
-    Kommt mit wenigen Abfragen aus, weil Shopify Tageswerte samt Aufschluesselung
-    in einem Rutsch liefert."""
+    Lange Zeitraeume werden in Monatsstuecke geteilt: ShopifyQL kappt grosse
+    Antworten bei rund 1000 Zeilen. Ein 2-Jahres-Erstabruf der Aufschluesselungen
+    (Produkt je Tag!) kaeme sonst stillschweigend unvollstaendig zurueck — und
+    weil vor dem Einfuegen der ganze Bereich geloescht wurde, gingen dabei sogar
+    vorhandene Daten verloren."""
+    d0, d1 = date.fromisoformat(von), date.fromisoformat(bis)
+    gesamt = 0
+    a = d0
+    while a <= d1:
+        b = min(a + timedelta(days=CHUNK_TAGE - 1), d1)
+        gesamt += _sync_zeitraum(con, a.isoformat(), b.isoformat())
+        a = b + timedelta(days=1)
+    if gesamt:
+        # Nur bei tatsaechlich gespeicherten Tagen den Zeitstempel setzen —
+        # sonst zeigt das Dashboard "frisch abgerufen", obwohl nichts kam.
+        _meta_setzen(con, "shopify_sync", _zeitstempel())
+        con.commit()
+    return gesamt
+
+
+def _sync_zeitraum(con, von, bis):
+    """Ein Teilzeitraum (hoechstens CHUNK_TAGE Tage) in die Datenbank."""
     verkauf = _reihe("FROM sales SHOW orders, gross_sales, discounts, returns, "
                      "net_sales, total_sales TIMESERIES day SINCE %s UNTIL %s" % (von, bis))
     sitzung = _reihe("FROM sessions SHOW sessions, online_store_visitors, "
@@ -403,6 +434,11 @@ def sync(con, von, bis):
     # Liegengebliebene Warenkoerbe
     try:
         for w in _warenkoerbe_holen(von, bis):
+            if w.get("abgeschlossen"):
+                # Spaeter doch gekauft: alten "abgebrochen"-Eintrag entfernen,
+                # sonst zaehlt er fuer immer als verlorener Umsatz.
+                con.execute("DELETE FROM shop_warenkorb WHERE id=?", (w["id"],))
+                continue
             con.execute("INSERT INTO shop_warenkorb(id,datum,wert,artikel) VALUES(?,?,?,?) "
                         "ON CONFLICT(id) DO UPDATE SET datum=excluded.datum, "
                         "wert=excluded.wert, artikel=excluded.artikel",
@@ -410,13 +446,20 @@ def sync(con, von, bis):
     except ShopifyFehler:
         pass
 
-    _meta_setzen(con, "shopify_sync", time.strftime("%Y-%m-%d %H:%M:%S"))
     con.commit()
     return len(tage)
 
 
-def _warenkoerbe_holen(von, bis, seiten=5):
-    """Abgebrochene Checkouts, seitenweise."""
+def _warenkoerbe_holen(von, bis, seiten=None):
+    """Abgebrochene Checkouts, seitenweise (100 je Seite)."""
+    if seiten is None:
+        # Seitenzahl an die Zeitraumlaenge koppeln; frueher war bei 500 Stueck
+        # Schluss, was lange Erstabrufe still abschnitt.
+        tage_n = (date.fromisoformat(bis) - date.fromisoformat(von)).days + 1
+        seiten = max(5, min(30, tage_n // 7 + 1))
+    # created_at:<=YYYY-MM-DD meint Mitternacht — der letzte Tag fiele weg.
+    # Deshalb exklusiv bis zum Folgetag filtern.
+    tag_danach = (date.fromisoformat(bis) + timedelta(days=1)).isoformat()
     raus, cursor = [], None
     for _ in range(seiten):
         d = graphql("""
@@ -429,13 +472,11 @@ def _warenkoerbe_holen(von, bis, seiten=5):
                 } }
                 pageInfo { hasNextPage endCursor }
               }
-            }""", {"q": "created_at:>=%s created_at:<=%s" % (von, bis),
+            }""", {"q": "created_at:>=%s created_at:<%s" % (von, tag_danach),
                    "n": 100, "c": cursor})
         block = d.get("abandonedCheckouts") or {}
         for k in (block.get("edges") or []):
             n = k.get("node") or {}
-            if n.get("completedAt"):
-                continue
             artikel = [(e.get("node") or {}).get("title")
                        for e in ((n.get("lineItems") or {}).get("edges") or [])]
             raus.append({
@@ -443,6 +484,7 @@ def _warenkoerbe_holen(von, bis, seiten=5):
                 "datum": (n.get("createdAt") or "")[:10],
                 "wert": _z(((n.get("totalPriceSet") or {}).get("shopMoney") or {}).get("amount")),
                 "artikel": ", ".join(a for a in artikel if a),
+                "abgeschlossen": bool(n.get("completedAt")),
             })
         seite = block.get("pageInfo") or {}
         if not seite.get("hasNextPage"):

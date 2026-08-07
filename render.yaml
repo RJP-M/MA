@@ -13,6 +13,8 @@ services:
     branch: main
     # Kein Build nötig (nur Python-Standardbibliothek); leeres requirements.txt genügt.
     buildCommand: "python --version"
+    # --auto-sync gilt in deutscher Zeit (Europe/Berlin). Der Abgleich wird
+    # nachgeholt, falls der Server um diese Uhrzeit gerade neu startete.
     startCommand: "python neo-proxy.py --auth --https --auto-sync 06:00 --db /var/data/neo-cache.db"
     healthCheckPath: /ping
 

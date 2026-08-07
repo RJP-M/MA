@@ -58,7 +58,7 @@ except Exception:              # noqa: BLE001
 
 # Fassung dieses Servers. Das Dashboard vergleicht sie mit seiner eigenen und
 # weist darauf hin, wenn eine der beiden Dateien beim Hochladen vergessen wurde.
-VERSION = "2026-07-28.60"
+VERSION = "2026-08-06.61"
 
 DEFAULT_TARGET = "https://portal.neo-wws.de/neo-server-prod"
 HERE = Path(__file__).resolve().parent
@@ -88,6 +88,32 @@ CFG = {"target": DEFAULT_TARGET, "db": str(HERE / "neo-cache.db"), "delay": 0.6,
        "sonntag": True,   # True = alle Kalendertage zaehlen (Standard)
        "auth": False,     # True = Benutzeranmeldung erforderlich (Server-Modus)
        "https": False}    # True = Cookies mit Secure-Flag (hinter TLS)
+
+
+# ------------------------------------------------------------ Deutsche Zeit
+# Der Server laeuft auf Render in UTC. Ohne Umrechnung waere "heute" zwischen
+# Mitternacht und 1/2 Uhr deutscher Zeit noch der Vortag, der Auto-Sync um
+# "06:00" liefe um 7/8 Uhr, und alle Zeitstempel im Dashboard waeren um ein
+# bis zwei Stunden verschoben. Deshalb rechnen alle fachlichen Datums- und
+# Zeitangaben in Europe/Berlin.
+try:
+    from zoneinfo import ZoneInfo
+    _TZ_DE = ZoneInfo("Europe/Berlin")
+except Exception:                                        # noqa: BLE001
+    _TZ_DE = None      # Fallback: Systemzeit (lokal unter Windows/macOS korrekt)
+
+
+def jetzt_de():
+    """Aktuelle Uhrzeit in deutscher Zeit, als naive datetime."""
+    if _TZ_DE is not None:
+        return datetime.now(_TZ_DE).replace(tzinfo=None)
+    return datetime.now()
+
+
+def heute_de():
+    """Heutiges Datum in deutscher Zeit."""
+    return jetzt_de().date()
+
 
 # Optional: Sonntage als Schliesstage ueberall ausklammern (--ohne-sonntag).
 # Dann werden sie nicht synchronisiert, gelten nicht als Datenluecke und
@@ -232,7 +258,7 @@ def api_limit():
 
 
 def api_monat():
-    return date.today().strftime("%Y-%m")
+    return heute_de().strftime("%Y-%m")
 
 
 def api_stand(con=None):
@@ -435,7 +461,7 @@ def sync_artikel(auth, full=False):
                          pr.get("ekPreis"), pr.get("vkPreis"),
                          pr.get("uvpPreis"), pr.get("baPreis")))
         meta_set(con, "artikel_version", maxv + 1)
-        meta_set(con, "artikel_sync", datetime.now().isoformat(timespec="seconds"))
+        meta_set(con, "artikel_sync", jetzt_de().isoformat(timespec="seconds"))
         con.commit()
         con.close()
         total += len(rows)
@@ -469,7 +495,8 @@ def sync_umsatz(auth, von, bis, force=False, tage=None):
                 days.append(s)
             d += timedelta(days=1)
 
-    job_start("Umsätze", len(days))
+    if not job_start("Umsätze", len(days)):
+        return None                       # es laeuft bereits ein anderer Sync
     for i, tag in enumerate(days, 1):
         job_step(done=i, note=tag)
         data = neo_get("/bewegungsdaten/umsatz/liste", {"datum": tag}, auth=auth) or []
@@ -499,7 +526,7 @@ def sync_umsatz(auth, von, bis, force=False, tage=None):
                                  v.get("mwstUmsatzMitRabatt") or 0.0,
                                  av.get("anzahlBelegeGesamt") or 0))
         con.execute("INSERT OR REPLACE INTO umsatz_tage VALUES(?,?,?,?)",
-                    (tag, datetime.now().isoformat(timespec="seconds"), belege, pos))
+                    (tag, jetzt_de().isoformat(timespec="seconds"), belege, pos))
         con.commit()
         con.close()
         if i < len(days):
@@ -509,7 +536,7 @@ def sync_umsatz(auth, von, bis, force=False, tage=None):
 
 def sync_bestand(auth):
     data = neo_get("/bewegungsdaten/artikelbestaende", {"withNullBestand": True}, auth=auth) or []
-    stand = datetime.now().isoformat(timespec="seconds")
+    stand = jetzt_de().isoformat(timespec="seconds")
     con = db()
     con.execute("DELETE FROM bestand")
     con.executemany("INSERT OR REPLACE INTO bestand VALUES(?,?,?,?,?,?,?)",
@@ -523,23 +550,31 @@ def sync_bestand(auth):
 
 
 def run_sync(auth, von, bis, what, tage=None):
+    # job_start liefert False, wenn bereits ein Sync laeuft. Frueher wurde das
+    # ignoriert - zwei fast gleichzeitige Starts liefen dann beide durch und
+    # verdoppelten die kostenpflichtigen NEO-Aufrufe.
     try:
         if "filialen" in what:
-            job_start("Filialen", 1)
+            if not job_start("Filialen", 1):
+                return
             n = sync_filialen(auth)
             job_step(done=1, note="%d Filialen" % n)
             job_end()
         if "artikel" in what:
-            job_start("Artikelstamm", 0)
+            if not job_start("Artikelstamm", 0):
+                return
             n = sync_artikel(auth, full=("artikel_full" in what))
             job_step(note="%d Artikel" % n)
             job_end()
         if "umsatz" in what:
             n = sync_umsatz(auth, von, bis, force=("umsatz_force" in what), tage=tage)
+            if n is None:
+                return
             job_step(note="%d Tage geladen" % n)
             job_end()
         if "bestand" in what:
-            job_start("Bestände", 1)
+            if not job_start("Bestände", 1):
+                return
             n = sync_bestand(auth)
             job_step(done=1, note="%d Positionen" % n)
             job_end()
@@ -656,7 +691,7 @@ def q_kpi(con, q):
     d0, d1 = date.fromisoformat(von), date.fromisoformat(bis)
     span = (d1 - d0).days + 1
     p0, p1 = d0 - timedelta(days=span), d0 - timedelta(days=1)
-    y0, y1 = d0.replace(year=d0.year - 1), d1.replace(year=d1.year - 1)
+    y0, y1 = _vorjahr(d0), _vorjahr(d1)
 
     vt = verkaufstage(von, bis)
     a = one(von, bis)
@@ -811,7 +846,7 @@ def q_ranking(con, q):
     d0, d1 = date.fromisoformat(q["von"]), date.fromisoformat(q["bis"])
     span = (d1 - d0).days + 1
     p0, p1 = d0 - timedelta(days=span), d0 - timedelta(days=1)
-    y0, y1 = d0.replace(year=d0.year - 1), d1.replace(year=d1.year - 1)
+    y0, y1 = _vorjahr(d0), _vorjahr(d1)
 
     sql = """
     SELECT {expr} AS dim,
@@ -878,7 +913,7 @@ def q_windows(con, q):
     expr = DIMS.get(dim, DIMS["marke"])
     cond, args = where_clause(q)
     extra = (" AND " + " AND ".join(cond)) if cond else ""
-    ende = date.fromisoformat(q.get("bis") or date.today().isoformat())
+    ende = date.fromisoformat(q.get("bis") or heute_de().isoformat())
 
     fenster = []
     for teil in str(q.get("fenster") or "7,30,90").split(","):
@@ -964,9 +999,9 @@ def q_ytd(con, q):
     """Year to date gegen Vorjahreszeitraum, monatlich aufgeschluesselt."""
     cond, args = where_clause(q)
     extra = (" AND " + " AND ".join(cond)) if cond else ""
-    heute = date.fromisoformat(q.get("bis") or date.today().isoformat())
+    heute = date.fromisoformat(q.get("bis") or heute_de().isoformat())
     cy0, cy1 = date(heute.year, 1, 1), heute
-    py0, py1 = date(heute.year - 1, 1, 1), heute.replace(year=heute.year - 1)
+    py0, py1 = date(heute.year - 1, 1, 1), _vorjahr(heute)
 
     sql = """
     SELECT substr(u.datum,1,7) AS monat, substr(u.datum,6,2) AS mm, substr(u.datum,1,4) AS jahr,
@@ -1026,7 +1061,7 @@ def q_ytd(con, q):
 def q_bestand(con, q):
     """Bestand + Abverkauf der letzten N Tage -> Reichweite in Tagen."""
     tage = int(q.get("tage", 30))
-    bis = q.get("bis") or date.today().isoformat()
+    bis = q.get("bis") or heute_de().isoformat()
     von = (date.fromisoformat(bis) - timedelta(days=tage - 1)).isoformat()
     cond, args = where_clause(q)
     extra = (" AND " + " AND ".join(cond)) if cond else ""
@@ -1113,7 +1148,7 @@ def q_wochentag(con, q):
     d0, d1 = date.fromisoformat(von), date.fromisoformat(bis)
     span = (d1 - d0).days + 1
     p0, p1 = d0 - timedelta(days=span), d0 - timedelta(days=1)
-    y0, y1 = d0.replace(year=d0.year - 1), d1.replace(year=d1.year - 1)
+    y0, y1 = _vorjahr(d0), _vorjahr(d1)
 
     cur = _wtag_rows(con, von, bis, cond, args)
     vp = _wtag_rows(con, p0.isoformat(), p1.isoformat(), cond, args)
@@ -1168,7 +1203,7 @@ def q_luecken(con, q):
 
     Das ist der gefaehrlichste stille Fehler: ein fehlender Tag senkt jeden
     Perioden- und Vorjahresvergleich, ohne dass es auffaellt."""
-    bis = q.get("bis") or date.today().isoformat()
+    bis = q.get("bis") or heute_de().isoformat()
     von = q.get("von") or (date.fromisoformat(bis) - timedelta(days=START_TAGE)).isoformat()
     mit_so = sonntag_aktiv(q)
     have = {r["datum"] for r in con.execute(
@@ -1224,7 +1259,7 @@ def q_markenmonat(con, q):
 
     Ohne 'monat' kommen die Monatssummen samt Linie je Marke zurueck.
     Mit 'monat=2026-07' die Artikel, die in genau diesem Monat verkauft wurden."""
-    bis = q.get("bis") or date.today().isoformat()
+    bis = q.get("bis") or heute_de().isoformat()
     von = q.get("von") or (date.fromisoformat(bis) - timedelta(days=364)).isoformat()
     # Mehrere Marken kommen mit | getrennt (Komma waere unsicher, weil
     # Markennamen selbst Kommas enthalten koennen). Aeltere Aufrufe mit Komma
@@ -1405,7 +1440,7 @@ def q_penner(con, q):
     Das ist totes Kapital im Regal. Der Zeitraum ist frei waehlbar; mit dem
     Jahresanfang als Startdatum sieht man, was dieses Jahr noch gar nicht
     gelaufen ist."""
-    bis = q.get("bis") or date.today().isoformat()
+    bis = q.get("bis") or heute_de().isoformat()
     von = q.get("von") or date(date.fromisoformat(bis).year, 1, 1).isoformat()
     nur_bestand = q.get("nurBestand", "1") != "0"     # ohne Bestand meist uninteressant
     filF = " AND b.filialeNr = %d" % int(q["filiale"]) if q.get("filiale") else ""
@@ -1518,7 +1553,7 @@ def q_kapital(con, q):
             }.get(dim, "COALESCE(a.marke,'(ohne Marke)')")
     tage = int(q.get("tage", 90))
     bis = q.get("bis") or (con.execute("SELECT MAX(datum) d FROM umsatz_tage").fetchone()["d"]
-                           or date.today().isoformat())
+                           or heute_de().isoformat())
     von = (date.fromisoformat(bis) - timedelta(days=tage - 1)).isoformat()
 
     dimcond, dimargs = [], []
@@ -1729,7 +1764,7 @@ def q_neuheiten(con, q):
     """Artikel nach erstem Verkaufstag - tragen Neulistungen oder kosten sie nur Platz?"""
     tage = int(q.get("tage", 90))
     bis = q.get("bis") or (con.execute("SELECT MAX(datum) d FROM umsatz_tage").fetchone()["d"]
-                           or date.today().isoformat())
+                           or heute_de().isoformat())
     ab = (date.fromisoformat(bis) - timedelta(days=tage - 1)).isoformat()
     # Cache-Start kennen: Artikel, die am ersten Cache-Tag schon liefen, sind nicht "neu"
     start = con.execute("SELECT MIN(datum) d FROM umsatz_tage").fetchone()["d"]
@@ -1775,8 +1810,8 @@ def q_artikelsuche(con, q):
     begriff = (q.get("q") or "").strip()
     if len(begriff) < 2:
         return {"treffer": [], "hinweis": "Bitte mindestens zwei Zeichen eingeben."}
-    von = q.get("von") or (date.today() - timedelta(days=364)).isoformat()
-    bis = q.get("bis") or date.today().isoformat()
+    von = q.get("von") or (heute_de() - timedelta(days=364)).isoformat()
+    bis = q.get("bis") or heute_de().isoformat()
     like = "%" + begriff.replace("%", "").lower() + "%"
     ist_nr = begriff.isdigit()
 
@@ -1811,7 +1846,7 @@ def q_artikel(con, q):
     d0, d1 = date.fromisoformat(von), date.fromisoformat(bis)
     span = (d1 - d0).days + 1
     p0, p1 = d0 - timedelta(days=span), d0 - timedelta(days=1)
-    y0, y1 = d0.replace(year=d0.year - 1), d1.replace(year=d1.year - 1)
+    y0, y1 = _vorjahr(d0), _vorjahr(d1)
 
     stamm = con.execute("SELECT * FROM artikel WHERE artikelNr=?", (nr,)).fetchone()
     if not stamm:
@@ -1878,10 +1913,10 @@ def q_jahresgespraech(con, q):
     das laufende Jahr bis zum Stichtag, verglichen mit demselben Zeitraum
     des Vorjahres. Respektiert alle gesetzten Filter (Marke, Lieferant, ...)."""
     bis = q.get("bis") or (con.execute("SELECT MAX(datum) d FROM umsatz_tage").fetchone()["d"]
-                           or date.today().isoformat())
+                           or heute_de().isoformat())
     d1 = date.fromisoformat(bis)
     von = date(d1.year, 1, 1).isoformat()
-    vj_von, vj_bis = date(d1.year - 1, 1, 1).isoformat(), d1.replace(year=d1.year - 1).isoformat()
+    vj_von, vj_bis = date(d1.year - 1, 1, 1).isoformat(), _vorjahr(d1).isoformat()
     basis = dict(q, von=von, bis=bis)
 
     kpi = q_kpi(con, basis)
@@ -2334,7 +2369,7 @@ def jahres_pdf(con, q):
     d = q_jahresgespraech(con, q)
     k, vj = d["kpi"]["aktuell"], d["kpi"]["vorjahr"]
     partner = " · ".join(str(v) for v in d["filter"].values()) or "Gesamtsortiment"
-    heute = datetime.now().strftime("%d.%m.%Y")
+    heute = jetzt_de().strftime("%d.%m.%Y")
 
     b = Bericht("Jahresgespräch %d — %s" % (d["jahr"], partner),
                 "%s bis %s" % (d["von"], d["bis"]),
@@ -2530,7 +2565,7 @@ def q_alerts(con, q):
     """Regelbasierte Auffaelligkeiten aus dem Cache. Braucht keine API-Rechte,
     rechnet ausschliesslich auf bereits geladenen Daten."""
     bis = q.get("bis") or (con.execute("SELECT MAX(datum) d FROM umsatz_tage").fetchone()["d"]
-                           or date.today().isoformat())
+                           or heute_de().isoformat())
     schwelle = float(q.get("schwelle", 15))       # Prozent Umsatzeinbruch
     min_umsatz = float(q.get("minUmsatz", 500))   # Rauschfilter
     reichweite_min = float(q.get("reichweite", 7))
@@ -2540,7 +2575,7 @@ def q_alerts(con, q):
 
     d1 = date.fromisoformat(bis)
     c0, p0, p1 = d1 - timedelta(days=6), d1 - timedelta(days=13), d1 - timedelta(days=7)
-    y0, y1 = c0.replace(year=c0.year - 1), d1.replace(year=d1.year - 1)
+    y0, y1 = _vorjahr(c0), _vorjahr(d1)
 
     # 1) Marken mit Umsatzeinbruch (7 Tage gegen Vorwoche)
     sql = """
@@ -2647,11 +2682,21 @@ def backup_db(ziel_ordner=None):
     die man sonst Tag fuer Tag neu aus der API ziehen muesste."""
     ordner = Path(ziel_ordner or (Path(CFG["db"]).parent / "backups"))
     ordner.mkdir(parents=True, exist_ok=True)
-    ziel = ordner / ("neo-cache-%s.db" % datetime.now().strftime("%Y%m%d-%H%M"))
+    ziel = ordner / ("neo-cache-%s.db" % jetzt_de().strftime("%Y%m%d-%H%M"))
     src = sqlite3.connect(CFG["db"])
     dst = sqlite3.connect(str(ziel))
-    with dst:
-        src.backup(dst)
+    try:
+        with dst:
+            src.backup(dst)
+    except Exception:
+        # Halbfertige Zieldatei nicht liegen lassen
+        dst.close()
+        src.close()
+        try:
+            ziel.unlink()
+        except OSError:
+            pass
+        raise
     dst.close()
     src.close()
     # Nur die letzten 12 Sicherungen behalten
@@ -2674,7 +2719,7 @@ def wochenreport(con, ordner=None, bis=None):
     """Erzeugt einen eigenstaendigen HTML-Report (druck- und PDF-tauglich)
     plus CSV-Dateien mit den Rohwerten."""
     bis = bis or (con.execute("SELECT MAX(datum) d FROM umsatz_tage").fetchone()["d"]
-                  or date.today().isoformat())
+                  or heute_de().isoformat())
     von = (date.fromisoformat(bis) - timedelta(days=6)).isoformat()
     q = {"von": von, "bis": bis, "kanal": "all"}
 
@@ -2840,7 +2885,7 @@ def wochenreport(con, ordner=None, bis=None):
 
     html.append("<footer>Erzeugt am %s aus dem lokalen NEO-Cache. "
                 "Rohdaten als CSV liegen im selben Ordner.</footer>"
-                % datetime.now().strftime("%d.%m.%Y %H:%M"))
+                % jetzt_de().strftime("%d.%m.%Y %H:%M"))
 
     pfad = ordner / ("%s.html" % stamm)
     pfad.write_text("\n".join(html), encoding="utf-8")
@@ -2870,6 +2915,7 @@ def q_dimensions(con):
             "bestandSync": meta_get(con, "bestand_sync"),
             "autosyncLetzter": meta_get(con, "autosync_letzter"),
             "autosyncStatus": meta_get(con, "autosync_status"),
+            "shopifyFehler": meta_get(con, "shopify_sync_fehler") or None,
         },
         "api": api_stand(con),
         "version": VERSION,
@@ -2923,6 +2969,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                 urllib.parse.parse_qs(roh.decode("utf-8", "replace")).items()}
         return self._body_cache
 
+    def _fremde_seite(self):
+        """True bei einer Cross-Site-Anfrage (CSRF-Schutz).
+
+        Aktions-Endpunkte wie /sync/start sind per GET erreichbar; mit
+        SameSite=Lax schickt der Browser das Sitzungs-Cookie bei Klicks auf
+        fremde Links mit. Moderne Browser deklarieren die Herkunft im Header
+        Sec-Fetch-Site - fehlt er (aeltere Browser, curl), wird nicht
+        blockiert."""
+        sfs = (self.headers.get("Sec-Fetch-Site") or "").lower()
+        return sfs in ("cross-site", "same-site")
+
     def _cookie_wert(self, name):
         ck = SimpleCookie(self.headers.get("Cookie", ""))
         return ck[name].value if name in ck else None
@@ -2959,6 +3016,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             b = self._body()
             con = db()
             try:
+                warte = neo_auth.sperre_sekunden(b.get("email"))
+                if warte:
+                    self.json_out(429, {"error": "Zu viele Fehlversuche. Bitte in "
+                                                 "%d Sekunden erneut versuchen." % warte})
+                    return True
                 u = neo_auth.pruefen(con, b.get("email"), b.get("passwort") or b.get("password"))
                 if not u:
                     self.json_out(401, {"error": "E-Mail oder Passwort falsch."})
@@ -3055,7 +3117,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             try:
                 neo_auth.passwort_selbst_aendern(
                     con, me["id"], b.get("alt") or "", b.get("neu") or "")
-                self.json_out(200, {"ok": True})
+                # Der Passwortwechsel macht alle alten Sitzungen ungültig —
+                # die eigene laufende bekommt hier direkt ein frisches Token.
+                tok = neo_auth.token_erzeugen(con, me["id"])
+                body = json.dumps({"ok": True}).encode("utf-8")
+                self.send_response(200)
+                self._cookie_setzen(tok)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             except ValueError as e:
                 self.json_out(400, {"error": str(e)})
             finally:
@@ -3126,7 +3197,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "hinweis": "Shopify ist noch nicht verbunden. Hinterlege SHOPIFY_SHOP, "
                            "SHOPIFY_CLIENT_ID und SHOPIFY_CLIENT_SECRET in den "
                            "Servereinstellungen."})
-        bis = q.get("bis") or date.today().isoformat()
+        bis = q.get("bis") or heute_de().isoformat()
         von = q.get("von") or (date.fromisoformat(bis) - timedelta(days=29)).isoformat()
         con = db()
         try:
@@ -3137,8 +3208,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if neo_shopify.stand(con).get("tage"):
                     s_von, s_bis = von, bis
                 else:
-                    s_bis = date.today().isoformat()
-                    s_von = (date.today() - timedelta(days=START_TAGE)).isoformat()
+                    s_bis = heute_de().isoformat()
+                    s_von = (heute_de() - timedelta(days=START_TAGE)).isoformat()
                 try:
                     neo_shopify.sync(con, s_von, s_bis)
                 except neo_shopify.ShopifyFehler as e:
@@ -3198,6 +3269,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             if self._blockiert(p):
                 return
+            if (p in ("/sync/start", "/backup", "/report")
+                    and self._fremde_seite()):
+                return self.json_out(403, {"error": "Anfrage von fremder Seite abgelehnt."})
             if p.startswith("/api/"):
                 return self.proxy("GET")
             if p == "/sync/status":
@@ -3208,7 +3282,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if p == "/jahresgespraech.pdf":
                 con = db()
                 try:
-                    q.setdefault("bis", date.today().isoformat())
+                    q.setdefault("bis", heute_de().isoformat())
                     q.setdefault("von", q["bis"][:4] + "-01-01")
                     daten, partner = jahres_pdf(con, q)
                 finally:
@@ -3222,11 +3296,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 return self.wfile.write(daten)
             if p == "/backup":
-                return self.json_out(200, backup_db(q.get("ordner")))
+                # Im Server-Modus keinen frei waehlbaren Zielordner zulassen -
+                # sonst koennte jeder angemeldete Nutzer Dateien an beliebige
+                # Pfade des Servers schreiben (und dort .db-Dateien loeschen).
+                return self.json_out(200, backup_db(None if CFG["auth"] else q.get("ordner")))
             if p == "/report":
                 con = db()
                 try:
-                    return self.json_out(200, wochenreport(con, q.get("ordner"), q.get("bis")))
+                    return self.json_out(200, wochenreport(
+                        con, None if CFG["auth"] else q.get("ordner"), q.get("bis")))
                 finally:
                     con.close()
             if p == "/data/shopify":
@@ -3257,6 +3335,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_PUT(self):
         self._body_cache = None
         self._body_roh = None
+        self._body()   # Body sofort von der Leitung nehmen (Keep-Alive-sicher)
         if self._blockiert(urllib.parse.urlparse(self.path).path):
             return
         self.proxy("PUT")
@@ -3264,6 +3343,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_DELETE(self):
         self._body_cache = None
         self._body_roh = None
+        self._body()   # Body sofort von der Leitung nehmen (Keep-Alive-sicher)
         u = urllib.parse.urlparse(self.path)
         q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
         if self._auth_routen("DELETE", u.path, q):
@@ -3290,7 +3370,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if JOB["running"]:
                 return self.json_out(409, {"error": "Es läuft bereits ein Sync."})
         what = set((q.get("what") or "filialen,artikel,umsatz,bestand").split(","))
-        bis = q.get("bis") or date.today().isoformat()
+        bis = q.get("bis") or heute_de().isoformat()
         von = q.get("von") or (date.fromisoformat(bis) - timedelta(days=START_TAGE)).isoformat()
         # Einzelne Tage gezielt nachladen, z. B. zum Reparieren leerer Tage
         tage = [t.strip() for t in (q.get("tage") or "").split(",") if t.strip()]
@@ -3306,8 +3386,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             if name == "dimensions":
                 return self.json_out(200, q_dimensions(con))
-            q.setdefault("bis", date.today().isoformat())
-            q.setdefault("von", (date.fromisoformat(q["bis"]) - timedelta(days=29)).isoformat())
+            q.setdefault("bis", heute_de().isoformat())
+            # Kein pauschales von-Default fuer Endpunkte mit eigener, laengerer
+            # Standardspanne - sonst prueft z. B. der Lueckencheck statt der
+            # vollen Historie nur 30 Tage und uebersieht fast alle Loecher.
+            if name not in ("luecken", "penner", "markenmonat", "artikelsuche"):
+                q.setdefault("von", (date.fromisoformat(q["bis"]) - timedelta(days=29)).isoformat())
             if name == "kpi":
                 return self.json_out(200, q_kpi(con, q))
             if name == "trend":
@@ -3368,6 +3452,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def proxy(self, method):
         if not self.path.startswith("/api/"):
             return self.plain(404, "API-Aufrufe muessen mit /api/ beginnen.")
+        # Im Server-Modus duerfen nur Administratoren schreibend an die
+        # Warenwirtschaft - das Dashboard selbst liest nur.
+        if CFG["auth"] and method in ("PUT", "DELETE", "POST"):
+            u = self._nutzer()
+            if not u or u.get("rolle") != "admin":
+                return self.json_out(403, {"error": "Schreibzugriffe auf die NEO-API "
+                                                    "sind Administratoren vorbehalten."})
+        # Auch direkte Browser-Aufrufe zaehlen gegen das NEO-Monatsbudget.
+        # Frueher griff die Aufrufbremse nur fuer die servereigenen Abrufe -
+        # eine Endlosschleife im Frontend haette ungebremst Kosten erzeugt.
+        if api_zaehlen() is None:
+            g = api_limit()
+            return self.json_out(429, {"error": "Monatslimit erreicht: %d NEO-Aufrufe "
+                                                "in %s verbraucht." % (g, api_monat())})
         url = CFG["target"].rstrip("/") + self.path[len("/api"):]
         if getattr(self, "_body_roh", None) is not None:
             payload = self._body_roh or None        # bereits gelesener Body (Keep-Alive)
@@ -3456,21 +3554,149 @@ def shopify_nachziehen(von, bis, still=False):
     con = db()
     try:
         n = neo_shopify.sync(con, von, bis)
+        # Fehler-Merker loeschen, damit das Dashboard "ok" anzeigen kann
+        meta_set(con, "shopify_sync_fehler", "")
+        con.commit()
         if not still:
             print("  [%s] Shopify: %d Tage aktualisiert."
-                  % (datetime.now().strftime("%H:%M"), n))
+                  % (jetzt_de().strftime("%H:%M"), n))
         return n
     except Exception as e:                                # noqa: BLE001
+        # Fehler nicht verschlucken, sondern sichtbar machen: frueher stand er
+        # nur im Server-Log, waehrend der Status "ok" meldete.
+        try:
+            meta_set(con, "shopify_sync_fehler",
+                     "%s — %s" % (jetzt_de().isoformat(timespec="seconds"), e))
+            con.commit()
+        except Exception:                                 # noqa: BLE001
+            pass
         if not still:
             print("  [%s] Shopify-Sync fehlgeschlagen: %s"
-                  % (datetime.now().strftime("%H:%M"), e))
+                  % (jetzt_de().strftime("%H:%M"), e))
         return None
     finally:
         con.close()
 
 
+AUTOSYNC_LOCK = threading.Lock()
+
+
+def _autosync_versuche_heute(con, tag):
+    """Wie oft wurde heute schon (erfolglos) versucht?"""
+    v = meta_get(con, "autosync_versuche") or ""
+    if not v.startswith(tag):
+        return 0
+    try:
+        return int(v.rsplit(":", 1)[1])
+    except (IndexError, ValueError):
+        return 0
+
+
+def auto_sync_faellig(hh, mm):
+    """True, wenn es nach HH:MM (deutsche Zeit) ist und heute noch kein
+    erfolgreicher Abgleich lief. Nach einem Fehlschlag wird fruehestens nach
+    einer Stunde und hoechstens viermal am Tag erneut versucht - das schuetzt
+    das NEO-Monatsbudget vor Dauerschleifen."""
+    n = jetzt_de()
+    if (n.hour, n.minute) < (hh, mm):
+        return False
+    tag = heute_de().isoformat()
+    con = db()
+    try:
+        letzter = meta_get(con, "autosync_letzter") or ""
+        status = meta_get(con, "autosync_status") or ""
+        anzahl = _autosync_versuche_heute(con, tag)
+    finally:
+        con.close()
+    if letzter[:10] != tag:
+        return True                      # heute lief noch gar nichts
+    if status == "ok":
+        return False                     # heute schon erfolgreich
+    if anzahl >= 4:
+        return False                     # genug Versuche fuer heute
+    try:
+        letzte_zeit = datetime.fromisoformat(letzter)
+    except ValueError:
+        return True
+    return (n - letzte_zeit) >= timedelta(hours=1)
+
+
+def auto_sync_ausfuehren(tage_zurueck):
+    """Ein kompletter taeglicher Abgleich: NEO + Shopify, danach Sicherung
+    und montags der Wochenreport."""
+    auth = env_auth()
+    bis = heute_de()
+    von = bis - timedelta(days=tage_zurueck)
+    print("  [%s] Auto-Sync startet…" % jetzt_de().strftime("%Y-%m-%d %H:%M"))
+    err = None
+    if auth:
+        # WICHTIG: umsatz_force. Ohne das Erzwingen wuerde der heutige Tag,
+        # der morgens um 6 Uhr noch fast leer ist, als "geladen" vermerkt
+        # und nie wieder geholt -- der Umsatz jedes Tages bliebe auf null.
+        # Deshalb wird das ganze Fenster jede Nacht neu geholt.
+        run_sync(auth, von.isoformat(), bis.isoformat(),
+                 {"umsatz", "umsatz_force", "bestand", "artikel"})
+        with JOB_LOCK:
+            err = JOB["error"]
+    shopify_nachziehen(von.isoformat(), bis.isoformat())
+    tag = heute_de().isoformat()
+    con = db()
+    try:
+        anzahl = _autosync_versuche_heute(con, tag)
+        meta_set(con, "autosync_letzter", jetzt_de().isoformat(timespec="seconds"))
+        meta_set(con, "autosync_status", err or "ok")
+        meta_set(con, "autosync_versuche", "%s:%d" % (tag, anzahl + 1))
+        con.commit()
+    finally:
+        con.close()
+    print("  [%s] Auto-Sync fertig: %s" % (
+        jetzt_de().strftime("%H:%M"), err or "ok"))
+
+    if err:
+        return
+    # Taegliche Sicherung, dazu montags der Wochenreport
+    try:
+        b = backup_db()
+        print("      Sicherung: %s (%.1f MB)" % (b["datei"], b["groesseMB"]))
+    except Exception as e:  # noqa: BLE001
+        print("      Sicherung fehlgeschlagen: %s" % e)
+    if heute_de().weekday() == 0:
+        try:
+            con = db()
+            r = wochenreport(con)
+            con.close()
+            print("      Wochenreport: %s" % r["report"])
+        except Exception as e:  # noqa: BLE001
+            print("      Wochenreport fehlgeschlagen: %s" % e)
+
+
+def auto_sync_pruefen(hh, mm, tage_zurueck):
+    """Fuehrt den Abgleich aus, wenn er faellig ist. Threadsicher: laeuft
+    bereits eine Pruefung oder ein manueller Sync, passiert nichts."""
+    if not AUTOSYNC_LOCK.acquire(blocking=False):
+        return
+    try:
+        if not auto_sync_faellig(hh, mm):
+            return
+        with JOB_LOCK:
+            if JOB["running"]:
+                return                   # manueller Sync laeuft - naechste Runde
+        auto_sync_ausfuehren(tage_zurueck)
+    finally:
+        AUTOSYNC_LOCK.release()
+
+
 def auto_sync_loop(uhrzeit, tage_zurueck):
-    """Wartet bis zur naechsten faelligen Uhrzeit und zieht dann nach."""
+    """Prueft alle fuenf Minuten, ob der taegliche Abgleich faellig ist.
+
+    Frueher schlief dieser Thread in einem Stueck bis zur exakten Zieluhrzeit.
+    Das ging auf dem Server regelmaessig schief: Bei jedem Deploy oder Neustart
+    begann das Warten von vorn, und war der Prozess zur Zielzeit gerade nicht
+    wach (Neustart, schlafende Instanz), fiel der Abgleich fuer den ganzen Tag
+    aus - das Dashboard blieb auf altem Stand. Ausserdem galt die Uhrzeit in
+    Serverzeit (UTC), nicht in deutscher Zeit. Jetzt gilt: Sobald es nach HH:MM
+    deutscher Zeit ist und heute noch kein Abgleich lief, wird er nachgeholt -
+    egal, wann der Server gestartet wurde."""
     auth = env_auth()
     shop = neo_shopify is not None and neo_shopify.konfiguriert()
     if not auth and not shop:
@@ -3479,55 +3705,16 @@ def auto_sync_loop(uhrzeit, tage_zurueck):
     if not auth:
         print("  Auto-Sync: NEO-Zugang fehlt - es wird nur Shopify nachgezogen.")
     hh, mm = (int(x) for x in uhrzeit.split(":"))
-    print("  Auto-Sync: täglich um %02d:%02d (letzte %d Tage + Bestand%s)"
+    print("  Auto-Sync: täglich ab %02d:%02d deutscher Zeit (letzte %d Tage + Bestand%s)"
           % (hh, mm, tage_zurueck, " + Onlineshop" if shop else ""))
     while True:
-        now = datetime.now()
-        ziel = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
-        if ziel <= now:
-            ziel += timedelta(days=1)
-        time.sleep(max(30, (ziel - now).total_seconds()))
-        with JOB_LOCK:
-            if JOB["running"]:
-                continue
-        bis = date.today()
-        von = bis - timedelta(days=tage_zurueck)
-        print("  [%s] Auto-Sync startet…" % datetime.now().strftime("%Y-%m-%d %H:%M"))
-        err = None
-        if auth:
-            # WICHTIG: umsatz_force. Ohne das Erzwingen wuerde der heutige Tag,
-            # der morgens um 6 Uhr noch fast leer ist, als "geladen" vermerkt
-            # und nie wieder geholt -- der Umsatz jedes Tages bliebe auf null.
-            # Deshalb wird das ganze Fenster jede Nacht neu geholt.
-            run_sync(auth, von.isoformat(), bis.isoformat(),
-                     {"umsatz", "umsatz_force", "bestand", "artikel"})
-            with JOB_LOCK:
-                err = JOB["error"]
-        shopify_nachziehen(von.isoformat(), bis.isoformat())
-        con = db()
-        meta_set(con, "autosync_letzter", datetime.now().isoformat(timespec="seconds"))
-        meta_set(con, "autosync_status", err or "ok")
-        con.commit()
-        con.close()
-        print("  [%s] Auto-Sync fertig: %s" % (
-            datetime.now().strftime("%H:%M"), err or "ok"))
-
-        if err:
-            continue
-        # Taegliche Sicherung, dazu montags der Wochenreport
         try:
-            b = backup_db()
-            print("      Sicherung: %s (%.1f MB)" % (b["datei"], b["groesseMB"]))
+            auto_sync_pruefen(hh, mm, tage_zurueck)
         except Exception as e:  # noqa: BLE001
-            print("      Sicherung fehlgeschlagen: %s" % e)
-        if date.today().weekday() == 0:
-            try:
-                con = db()
-                r = wochenreport(con)
-                con.close()
-                print("      Wochenreport: %s" % r["report"])
-            except Exception as e:  # noqa: BLE001
-                print("      Wochenreport fehlgeschlagen: %s" % e)
+            # Der Waechter darf niemals sterben, sonst gibt es nie wieder
+            # ein automatisches Update.
+            print("  Auto-Sync-Pruefung fehlgeschlagen: %s" % e)
+        time.sleep(300)
 
 
 def main():
