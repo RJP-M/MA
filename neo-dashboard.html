@@ -903,7 +903,6 @@ body:not(.servermodus) .nur-server{display:none!important}
       <button class="mehrTab" data-tab="alerts" hidden>Alerts</button>
       <button class="mehrTab" data-tab="sortiment" hidden>Sortiment</button>
       <button class="mehrTab" data-tab="kapital" hidden>Kapital</button>
-      <button class="mehrTab" data-tab="ytd" hidden>YTD</button>
       <button class="mehrTab" data-tab="wochentag" hidden>Wochentage</button>
       <button class="mehrTab" data-tab="suche" hidden>Produktsuche</button>
       <button class="mehrTab" data-tab="jahr" hidden>Jahresgespräch</button>
@@ -942,6 +941,15 @@ body:not(.servermodus) .nur-server{display:none!important}
           <thead><tr><th>Marke</th><th class="num">Umsatz</th><th class="num">Δ%</th></tr></thead><tbody></tbody></table></div></div>
         <div class="card"><h2>Verlierer vs. Vorjahr</h2><div class="scroll sm"><table id="tLose">
           <thead><tr><th>Marke</th><th class="num">Umsatz</th><th class="num">Δ%</th></tr></thead><tbody></tbody></table></div></div>
+      </div>
+      <!-- Jahresverlauf (ehemals eigener YTD-Reiter): laufendes Jahr vs. Vorjahr -->
+      <div class="two">
+        <div class="card"><h2>Monatsumsatz — laufendes Jahr vs. Vorjahr</h2>
+          <canvas id="cYtd"></canvas>
+          <div class="hint" id="ytdInfo" style="margin-top:12px"></div></div>
+        <div class="card"><h2>Monate im Detail</h2><div class="scroll sm"><table id="tYtd">
+          <thead><tr><th>Monat</th><th class="num">Umsatz</th><th class="num">Vorjahr</th><th class="num">Δ</th><th class="num">Δ%</th></tr></thead>
+          <tbody></tbody></table></div></div>
       </div>
     </section>
 
@@ -1137,14 +1145,6 @@ body:not(.servermodus) .nur-server{display:none!important}
         </tr></thead><tbody></tbody></table></div>
         <div class="hint" style="margin-top:14px">Der Index vergleicht den Wochentag mit dem Durchschnitt aller Tage im Zeitraum: 120 heißt 20 % über dem Schnitt. Δ% vergleicht denselben Wochentag mit dem Vorjahr, nicht mit anderen Wochentagen.</div>
       </div>
-    </section>
-
-    <section id="t-ytd" class="hide">
-      <div class="kpis" id="ytdKpis"></div>
-      <div class="card"><h2>Monatsumsatz — laufendes Jahr vs. Vorjahr</h2><canvas id="cYtd"></canvas></div>
-      <div class="card"><h2>Monate im Detail</h2><div class="scroll"><table id="tYtd">
-        <thead><tr><th>Monat</th><th class="num">Umsatz</th><th class="num">Vorjahr</th><th class="num">Δ</th><th class="num">Δ%</th></tr></thead>
-        <tbody></tbody></table></div></div>
     </section>
 
     <section id="t-bestand" class="hide">
@@ -1839,7 +1839,7 @@ function chips(){
   $$('#chips span[data-s]').forEach(e=>e.onclick=()=>{const s=e.dataset.s;$(s).value=s==='#fKanal'?'all':'';refresh()});
 }
 
-const TABS=['ueber','onlineshop','filialen','trends','marken','markenmonat','marge','bestand','penner','alerts','sortiment','kapital','ytd','wochentag','suche','jahr','daten'];
+const TABS=['ueber','onlineshop','filialen','trends','marken','markenmonat','marge','bestand','penner','alerts','sortiment','kapital','wochentag','suche','jahr','daten'];
 $$('.tabs button[data-tab]').forEach(b=>b.onclick=()=>{
   $$('.tabs button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
   TABS.forEach(t=>$('#t-'+t).classList.toggle('hide',t!==b.dataset.tab)); loadTab(b.dataset.tab)});
@@ -1860,7 +1860,6 @@ async function loadTab(t){try{
   if(t==='marge')await loadMarge(); else if(t==='kapital')await loadKapital();
   else if(t==='marken')await loadRanking(); else if(t==='sortiment')await loadSortiment();
   else if(t==='trends')await loadWindows(); else if(t==='wochentag')await loadWochentag();
-  else if(t==='ytd')await loadYtd();
   else if(t==='filialen')await loadFilialbenchmark();
   else if(t==='bestand')await loadBestand(); else if(t==='alerts')await loadAlerts();
   else if(t==='penner')await loadPenner();
@@ -1882,6 +1881,7 @@ async function loadOverview(){
     raw('/data/ranking',{...f,dim:'warengruppe'}),
     raw('/data/ytd',f)]);
   ringWarengruppen(rWg.rows);
+  renderYtd(rYtd);   // Jahresverlauf (ehemals eigener YTD-Reiter)
   S.last.kpi=kpi; S.last.rankMarke=rank;
   S.last.trend={a:trend,j:trendVJ,perioden:pp};
   const a=kpi.aktuell,vj=kpi.vorjahr,d=(c,r)=>r?((c/r-1)*100):null;
@@ -2435,14 +2435,15 @@ async function loadWochentag(){
 }
 
 /* ---- YTD ---- */
-async function loadYtd(){
-  const d=await raw('/data/ytd',filters()),MN=['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+/* Jahresverlauf im Überblick (ehemals eigener YTD-Reiter). Die Daten kommen
+   aus loadOverview mit — kein zusätzlicher Abruf. Die Kachelzeile des alten
+   Reiters entfällt: die YTD-Kachel oben zeigt dieselben Zahlen. */
+function renderYtd(d){
+  const MN=['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
   const luecke=d.monateVergleichbar<d.monateGesamt;
-  $('#ytdKpis').innerHTML=[['YTD Umsatz (gesamt)',eur(d.summe)],
-    [`Vergleichbar (${d.monateVergleichbar} von ${d.monateGesamt} Mon.)`,eur(d.summeVergleichbar)],
-    ['Vorjahreszeitraum',eur(d.summeVJ)],['Veränderung',pct(d.pct)]]
-    .map(([l,v],i)=>`<div class="kpi"><div class="v ${i===3?cls(d.pct):''}">${v}</div><div class="l">${l}</div></div>`).join('');
-  msg('#fMsg',luecke?`Hinweis: Für ${d.monateGesamt-d.monateVergleichbar} Monat(e) fehlen Vorjahresdaten im Cache (reicht nur bis ${d.cacheVon}). Diese Monate sind vom Vorjahresvergleich ausgenommen.`:'','info');
+  $('#ytdInfo').textContent=luecke
+    ?`Für ${d.monateGesamt-d.monateVergleichbar} Monat(e) fehlen Vorjahresdaten im Cache (reicht nur bis ${d.cacheVon}). Diese Monate sind vom Vorjahresvergleich ausgenommen.`
+    :`YTD gesamt ${eur(d.summe)} · vergleichbar ${eur(d.summeVergleichbar)} vs. ${eur(d.summeVJ)} Vorjahr (${pct(d.pct)})`;
   chart('cYtd','bar',d.monate.map(m=>MN[+m.monat-1]),[
     {label:'Laufendes Jahr',data:d.monate.map(m=>m.brutto),backgroundColor:CF().akz,borderRadius:5},
     {label:'Vorjahr',data:d.monate.map(m=>m.bruttoVJ),backgroundColor:CF().rand,borderRadius:5}]);
