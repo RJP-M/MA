@@ -895,14 +895,11 @@ body:not(.servermodus) .nur-server{display:none!important}
       <button data-tab="filialen">Filialen</button>
       <button data-tab="marken">Ranking</button>
       <button data-tab="markenmonat">Marken je Monat</button>
-      <button data-tab="penner">Pennerartikel</button>
+      <button data-tab="sortiment">Sortiment &amp; Kapital</button>
       <!-- Alles Weitere liegt hinter „Mehr“, damit die Leiste im Alltag schmal bleibt -->
-      <button class="mehrTab" data-tab="trends" hidden>Trends</button>
       <button class="mehrTab" data-tab="marge" hidden>Marge &amp; Rabatt</button>
       <button class="mehrTab" data-tab="bestand" hidden>Bestand</button>
       <button class="mehrTab" data-tab="alerts" hidden>Alerts</button>
-      <button class="mehrTab" data-tab="sortiment" hidden>Sortiment</button>
-      <button class="mehrTab" data-tab="kapital" hidden>Kapital</button>
       <button class="mehrTab" data-tab="wochentag" hidden>Wochentage</button>
       <button class="mehrTab" data-tab="suche" hidden>Produktsuche</button>
       <button class="mehrTab" data-tab="jahr" hidden>Jahresgespräch</button>
@@ -912,6 +909,11 @@ body:not(.servermodus) .nur-server{display:none!important}
 
     <section id="t-ueber">
       <div class="kpis" id="kpis"></div>
+      <!-- Momentum (ehem. Trends-Reiter), Monats-Hochrechnung und Online-Anteil -->
+      <div class="kpis" id="kpis2"></div>
+      <div class="card hide" id="alertsUeber"><h2>Kritische Auffälligkeiten
+        <span class="r"><button class="ghost sm" id="btnAlertsAlle">Alle ansehen</button></span></h2>
+        <div id="alertsUeberListe"></div></div>
       <div class="card"><h2>Bruttoumsatz im Zeitverlauf
         <span class="r">
           <select id="tAnsicht" style="width:auto">
@@ -981,7 +983,10 @@ body:not(.servermodus) .nur-server{display:none!important}
       </div>
     </section>
 
-    <section id="t-kapital" class="hide">
+    <!-- Sortiment & Kapital: gebundenes Kapital, Nichtdreher und Sortimentspflege
+         beantworten dieselbe Frage (wo steckt Geld in Ware, die nichts bringt?)
+         und liegen deshalb in einem Reiter. -->
+    <section id="t-sortiment" class="hide">
       <div class="kpis" id="kKpis"></div>
       <div class="card"><h2>Gebundenes Kapital <span class="r">
         <select id="kDim" style="width:auto">
@@ -1003,9 +1008,59 @@ body:not(.servermodus) .nur-server{display:none!important}
         </tr></thead><tbody></tbody></table></div>
         <div class="hint" style="margin-top:14px">Bestandswert = Bestand × EK. Totes Kapital = Wert der Positionen ohne Abverkauf plus jener mit über 180 Tagen Reichweite. Umschlag pro Jahr zeigt, wie oft sich der Bestand dreht.</div>
       </div>
-    </section>
+      <div class="card">
+        <h2>Pennerartikel <span class="r">
+          <select id="pZeitraum" style="width:auto">
+            <option value="ytd" selected>Dieses Jahr (seit 1. Januar)</option>
+            <option value="30">Letzte 30 Tage</option>
+            <option value="90">Letzte 90 Tage</option>
+            <option value="180">Letzte 180 Tage</option>
+            <option value="365">Letzte 365 Tage</option>
+            <option value="filter">Zeitraum aus dem Filter oben</option>
+          </select>
+          <select id="pBestand" style="width:auto">
+            <option value="1" selected>Nur mit Bestand</option>
+            <option value="0">Alle Artikel</option>
+          </select>
+          <button class="ghost sm" id="btnPennerCsv">CSV</button></span></h2>
+        <div class="hint">Artikel, die im gewählten Zeitraum <b>kein einziges Mal</b> verkauft wurden.
+          Mit Bestand ist das totes Kapital im Regal. „Nie verkauft“ heißt: seit Beginn der
+          gespeicherten Daten gab es überhaupt keinen Verkauf.</div>
+        <div class="msg" id="pMsg"></div>
+      </div>
 
-    <section id="t-sortiment" class="hide">
+      <div class="kpis" id="pKpis"></div>
+
+      <div class="card">
+        <h2>Nach Marke <span class="r hint" id="pMarkeInfo"></span></h2>
+        <div class="scroll"><table id="tPennerMarke"><thead><tr>
+          <th data-k="dim">Marke</th>
+          <th data-k="artikel" class="num">Artikel</th>
+          <th data-k="nieVerkauft" class="num">davon nie verkauft</th>
+          <th data-k="bestand" class="num">Bestand</th>
+          <th data-k="kapital" class="num">Gebundenes Kapital</th>
+          <th data-k="anteil" class="num">Anteil</th>
+          <th data-k="aeltester">Letzter Verkauf</th>
+        </tr></thead><tbody></tbody></table></div>
+        <div class="hint" style="margin-top:14px">Zeile anklicken filtert die Artikelliste unten auf diese Marke.</div>
+      </div>
+
+      <div class="card">
+        <h2>Artikel im Einzelnen <span class="r">
+          <span class="hint" id="pArtikelInfo"></span>
+          <button class="ghost sm" id="btnPennerAlle" hidden>Alle Marken zeigen</button></span></h2>
+        <div class="scroll"><table id="tPennerArtikel"><thead><tr>
+          <th data-k="artikelNr" class="num">Artikel-Nr.</th>
+          <th data-k="bezeichnung">Bezeichnung</th>
+          <th data-k="marke">Marke</th>
+          <th data-k="warengruppe">Warengruppe</th>
+          <th data-k="bestand" class="num">Bestand</th>
+          <th data-k="ekPreis" class="num">EK</th>
+          <th data-k="kapital" class="num">Kapital</th>
+          <th data-k="letzterVerkauf">Letzter Verkauf</th>
+        </tr></thead><tbody></tbody></table></div>
+      </div>
+
       <div class="card"><h2>Sortimentsbreite gegen Ertrag <span class="r">
         <select id="sDim" style="width:auto">
           <option value="marke">Marke</option><option value="submarke">Submarke</option>
@@ -1098,33 +1153,6 @@ body:not(.servermodus) .nur-server{display:none!important}
       </div>
     </section>
 
-    <section id="t-trends" class="hide">
-      <div class="card"><h2>Rollierende Fenster <span class="r">
-        <select id="wFenster" style="width:auto">
-          <option value="7">Letzte 7 Tage</option>
-          <option value="14">Letzte 14 Tage</option>
-          <option value="30">Letzte 30 Tage</option>
-          <option value="60">Letzte 60 Tage</option>
-          <option value="90" selected>Letzte 90 Tage</option>
-          <option value="180">Letzte 180 Tage</option>
-          <option value="365">Letzte 365 Tage</option>
-          <option value="730">Letzte 730 Tage</option>
-        </select>
-        <select id="wAnsicht" style="width:auto">
-          <option value="auto" selected>Automatisch verdichtet</option>
-          <option value="glatt">Gleitender Ø 7 Tage</option>
-          <option value="kum">Kumuliert</option>
-          <option value="roh">Tageswerte</option>
-        </select>
-        <select id="wDim" style="width:auto">
-          <option value="marke">Marke</option><option value="submarke">Submarke</option>
-          <option value="warengruppe">Warengruppe</option><option value="lieferant">Lieferant</option>
-        </select></span></h2>
-        <div class="msg" id="wMsg"></div>
-        <div class="hint">Das gewählte Fenster endet am Bis-Datum und wird gegen die unmittelbar davorliegende Periode gleicher Länge sowie gegen das Vorjahr verglichen. <b>Kumuliert</b> summiert den Umsatz vom Fensterbeginn auf — der Abstand zwischen den Linien ist der Vorsprung bzw. Rückstand in Euro. <b>Gleitender Ø</b> glättet den Wochenrhythmus heraus.</div>
-      </div>
-      <div id="wWrap"></div>
-    </section>
 
     <section id="t-wochentag" class="hide">
       <div class="kpis" id="wtKpis"></div>
@@ -1349,60 +1377,6 @@ body:not(.servermodus) .nur-server{display:none!important}
       </div>
     </section>
 
-    <section id="t-penner" class="hide">
-      <div class="card">
-        <h2>Pennerartikel <span class="r">
-          <select id="pZeitraum" style="width:auto">
-            <option value="ytd" selected>Dieses Jahr (seit 1. Januar)</option>
-            <option value="30">Letzte 30 Tage</option>
-            <option value="90">Letzte 90 Tage</option>
-            <option value="180">Letzte 180 Tage</option>
-            <option value="365">Letzte 365 Tage</option>
-            <option value="filter">Zeitraum aus dem Filter oben</option>
-          </select>
-          <select id="pBestand" style="width:auto">
-            <option value="1" selected>Nur mit Bestand</option>
-            <option value="0">Alle Artikel</option>
-          </select>
-          <button class="ghost sm" id="btnPennerCsv">CSV</button></span></h2>
-        <div class="hint">Artikel, die im gewählten Zeitraum <b>kein einziges Mal</b> verkauft wurden.
-          Mit Bestand ist das totes Kapital im Regal. „Nie verkauft“ heißt: seit Beginn der
-          gespeicherten Daten gab es überhaupt keinen Verkauf.</div>
-        <div class="msg" id="pMsg"></div>
-      </div>
-
-      <div class="kpis" id="pKpis"></div>
-
-      <div class="card">
-        <h2>Nach Marke <span class="r hint" id="pMarkeInfo"></span></h2>
-        <div class="scroll"><table id="tPennerMarke"><thead><tr>
-          <th data-k="dim">Marke</th>
-          <th data-k="artikel" class="num">Artikel</th>
-          <th data-k="nieVerkauft" class="num">davon nie verkauft</th>
-          <th data-k="bestand" class="num">Bestand</th>
-          <th data-k="kapital" class="num">Gebundenes Kapital</th>
-          <th data-k="anteil" class="num">Anteil</th>
-          <th data-k="aeltester">Letzter Verkauf</th>
-        </tr></thead><tbody></tbody></table></div>
-        <div class="hint" style="margin-top:14px">Zeile anklicken filtert die Artikelliste unten auf diese Marke.</div>
-      </div>
-
-      <div class="card">
-        <h2>Artikel im Einzelnen <span class="r">
-          <span class="hint" id="pArtikelInfo"></span>
-          <button class="ghost sm" id="btnPennerAlle" hidden>Alle Marken zeigen</button></span></h2>
-        <div class="scroll"><table id="tPennerArtikel"><thead><tr>
-          <th data-k="artikelNr" class="num">Artikel-Nr.</th>
-          <th data-k="bezeichnung">Bezeichnung</th>
-          <th data-k="marke">Marke</th>
-          <th data-k="warengruppe">Warengruppe</th>
-          <th data-k="bestand" class="num">Bestand</th>
-          <th data-k="ekPreis" class="num">EK</th>
-          <th data-k="kapital" class="num">Kapital</th>
-          <th data-k="letzterVerkauf">Letzter Verkauf</th>
-        </tr></thead><tbody></tbody></table></div>
-      </div>
-    </section>
 
     <section id="t-alerts" class="hide">
       <div class="card">
@@ -1787,7 +1761,7 @@ async function loadDims(){
           : iso(new Date(e.getTime()-(+z-1)*864e5));
       }
     }
-    refresh(); loadAlertBadge();
+    refresh();
   } else {
     // Noch keine Daten im Cache — App verstecken, Ladebereich mit Hinweis zeigen
     $('#app').classList.add('hide'); $('#cfgCard').classList.add('hide');
@@ -1822,11 +1796,6 @@ $('#btnApply').onclick=()=>refresh();
 $('#btnReset').onclick=()=>{['#fFil','#fMarke','#fSubmarke','#fWg','#fLief'].forEach(s=>$(s).value='');$('#fKanal').value='all';refresh()};
 ['#fFil','#fKanal','#fMarke','#fSubmarke','#fWg','#fLief'].forEach(s=>$(s).onchange=()=>refresh());
 $('#rDim').onchange=()=>loadRanking(); $('#mDim').onchange=()=>loadMarge();
-$('#wDim').onchange=()=>loadWindows();
-$('#wFenster').onchange=()=>loadWindows();
-$('#wAnsicht').onchange=()=>{const d=S.last.windows; if(!d)return;
-  const w=d[$('#wFenster').value]?$('#wFenster').value:Object.keys(d).find(k=>d[k]&&d[k].serie);
-  if(w)zeichneFenster(w,d[w])};
 $('#bTage').onchange=$('#bView').onchange=()=>loadBestand();
 $('#btnAlerts').onclick=()=>loadAlerts(); $('#aSchwere').onchange=()=>loadAlerts();
 
@@ -1839,7 +1808,7 @@ function chips(){
   $$('#chips span[data-s]').forEach(e=>e.onclick=()=>{const s=e.dataset.s;$(s).value=s==='#fKanal'?'all':'';refresh()});
 }
 
-const TABS=['ueber','onlineshop','filialen','trends','marken','markenmonat','marge','bestand','penner','alerts','sortiment','kapital','wochentag','suche','jahr','daten'];
+const TABS=['ueber','onlineshop','filialen','marken','markenmonat','marge','bestand','alerts','sortiment','wochentag','suche','jahr','daten'];
 $$('.tabs button[data-tab]').forEach(b=>b.onclick=()=>{
   $$('.tabs button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
   TABS.forEach(t=>$('#t-'+t).classList.toggle('hide',t!==b.dataset.tab)); loadTab(b.dataset.tab)});
@@ -1857,12 +1826,12 @@ function activeTab(){return ($('.tabs button.on')||{}).dataset?.tab||'ueber'}
 async function refresh(){chips();msg('#fMsg','Lade…','info');
   try{await loadOverview();await loadTab(activeTab());msg('#fMsg','')}catch(e){msg('#fMsg',e.message,'err')}}
 async function loadTab(t){try{
-  if(t==='marge')await loadMarge(); else if(t==='kapital')await loadKapital();
-  else if(t==='marken')await loadRanking(); else if(t==='sortiment')await loadSortiment();
-  else if(t==='trends')await loadWindows(); else if(t==='wochentag')await loadWochentag();
+  if(t==='marge')await loadMarge();
+  else if(t==='marken')await loadRanking();
+  else if(t==='sortiment'){await loadKapital();await loadPenner();await loadSortiment();}
+  else if(t==='wochentag')await loadWochentag();
   else if(t==='filialen')await loadFilialbenchmark();
   else if(t==='bestand')await loadBestand(); else if(t==='alerts')await loadAlerts();
-  else if(t==='penner')await loadPenner();
   else if(t==='markenmonat')await loadMarkenMonat();
   else if(t==='onlineshop')await loadShopify();
   else if(t==='jahr')await loadJahr();
@@ -1912,7 +1881,73 @@ async function loadOverview(){
     <td class="num ${cls(r.pctVJ)}">${pct(r.pctVJ)}</td></tr>`).join('');
   $('#tWin tbody').innerHTML=mk([...rel].sort((x,y)=>y.deltaVJ-x.deltaVJ).slice(0,10));
   $('#tLose tbody').innerHTML=mk([...rel].sort((x,y)=>x.deltaVJ-y.deltaVJ).slice(0,10));
+  await ueberblickExtras(f,kpi);
 }
+
+/* Zweite Kachelzeile im Überblick: Monats-Hochrechnung, Momentum (ersetzt den
+   früheren Trends-Reiter) und Online-Anteil — dazu die kritischsten
+   Auffälligkeiten. Alles respektiert die Filter oben. Fehler einzelner Teile
+   lassen den Rest des Überblicks unberührt. */
+async function ueberblickExtras(f,kpi){
+  const K=(l,v,sub)=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div><div class="d">${sub||''}</div></div>`;
+  const teile=[];
+  const stand=S.cache.umsatzBis||f.bis;             // letzter Tag mit Daten
+  // -- Monats-Hochrechnung: Ø Umsatz je Verkaufstag × Verkaufstage des Monats,
+  //    verglichen mit dem kompletten Vorjahresmonat
+  try{
+    const d0=new Date(stand);
+    const m0=iso(new Date(d0.getFullYear(),d0.getMonth(),1));
+    const mEnde=new Date(d0.getFullYear(),d0.getMonth()+1,0);
+    const vtage=(a,b)=>{let n=0;for(let x=new Date(a);x<=b;x.setDate(x.getDate()+1))
+      if(EIN.sonntag||x.getDay()!==0)n++;return Math.max(n,1)};
+    const [mtd,vjm]=await Promise.all([
+      raw('/data/kpi',{...f,von:m0,bis:stand}),
+      raw('/data/kpi',{...f,von:iso(new Date(d0.getFullYear()-1,d0.getMonth(),1)),
+                            bis:iso(new Date(d0.getFullYear()-1,d0.getMonth()+1,0))})]);
+    const proj=(mtd.aktuell.umsatzProTag||0)*vtage(new Date(m0),mEnde);
+    const vjWert=vjm.aktuell.brutto||0, p=vjWert?((proj/vjWert-1)*100):null;
+    const MN=['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
+    teile.push(K(MN[d0.getMonth()]+' hochgerechnet',eur(proj),
+      `<span class="mut">bisher ${eur(mtd.aktuell.brutto)}</span> · <span class="${cls(p)}">VJ-Monat ${pct(p)}</span>`));
+  }catch(_){}
+  // -- Momentum: läuft es diese Woche / diesen Monat besser als im Vorjahr?
+  try{
+    const w=await raw('/data/windows',{...f,dim:'marke',fenster:'7,30,90'});
+    for(const n of ['7','30','90']){
+      const b=w[n]; if(!b||!b.rows)continue;
+      const sum=k=>b.rows.reduce((s,r)=>s+(r[k]||0),0);
+      const cur=sum('cur'),vj=sum('vj'),prev=sum('prev');
+      const pv=vj?((cur/vj-1)*100):null, pp=prev?((cur/prev-1)*100):null;
+      teile.push(K(`Letzte ${n} Tage`,eur(cur),
+        `<span class="${cls(pv)}">VJ ${pct(pv)}</span> · <span class="mut">Vorperiode ${pct(pp)}</span>`));
+    }
+  }catch(_){}
+  // -- Online-Anteil (nur sinnvoll, solange nicht auf einen Kanal gefiltert ist)
+  if((f.kanal||'all')==='all')try{
+    const online=await raw('/data/kpi',{...f,kanal:'webshop'});
+    const ant=kpi.aktuell.brutto?online.aktuell.brutto/kpi.aktuell.brutto*100:null;
+    const antVJ=kpi.vorjahr.brutto?online.vorjahr.brutto/kpi.vorjahr.brutto*100:null;
+    teile.push(K('Online-Anteil',ant==null?'—':nf1.format(ant)+' %',
+      `<span class="mut">${eur(online.aktuell.brutto)}${antVJ==null?'':' · Vorjahr '+nf1.format(antVJ)+' %'}</span>`));
+  }catch(_){}
+  $('#kpis2').innerHTML=teile.join('');
+  // -- Kritischste Auffälligkeiten direkt zeigen (das Badge allein liest niemand)
+  try{
+    const d=await raw('/data/alerts',{bis:f.bis});
+    const hoch=d.alerts.filter(x=>x.schwere==='hoch');
+    $('#alertBadge').innerHTML=hoch.length
+      ?`<span class="pill p-bad">${hoch.length} Alerts hoch</span>`
+      :`<span class="pill p-ok">keine kritischen Alerts</span>`;
+    const top=hoch.slice(0,5);
+    $('#alertsUeber').classList.toggle('hide',!top.length);
+    $('#alertsUeberListe').innerHTML=top.map(a=>
+      `<div style="padding:7px 0"><span class="pill p-bad">${esc(a.typ)}</span> `
+      +`<b>${esc(a.objekt||'')}</b>${a.ort?' · '+esc(a.ort):''} — ${esc(a.text||'')}</div>`).join('')
+      +(hoch.length>5?`<div class="hint" style="margin-top:6px">… und ${hoch.length-5} weitere unter Alerts.</div>`:'');
+  }catch(_){}
+}
+$('#btnAlertsAlle').onclick=()=>{mehrTabs(true);
+  const b=$('.tabs button[data-tab="alerts"]'); if(b)b.click()};
 
 /* Ringdiagramm Warengruppen. Mehr als sieben Segmente sind nicht mehr
    unterscheidbar — der Rest wird zu „Übrige" zusammengefasst. */
@@ -2271,137 +2306,6 @@ async function loadRanking(){
     ['num '+cls(r.pctVJ),pct(r.pctVJ)]],
     r=>{const s={marke:'#fMarke',submarke:'#fSubmarke',warengruppe:'#fWg',lieferant:'#fLief'}[dim];
       if(s){$(s).value=r.dim;refresh()}});
-}
-
-/* ---- Fenster ---- */
-async function loadWindows(){
-  const dim=$('#wDim').value;
-  let fenster=$('#wFenster').value;
-  msg('#wMsg','Lade…','info');
-  let d;
-  try{ d=await raw('/data/windows',{...filters(),dim,fenster}); }
-  catch(e){ msg('#wMsg',e.message,'err'); return; }
-  S.last.windows=d;
-  // Liefert der Server das gewünschte Fenster nicht, läuft dort noch eine
-  // ältere Fassung. Das sagen wir deutlich, statt stumm die alte Karte
-  // stehen zu lassen.
-  if(!d[fenster]){
-    const da=Object.keys(d).filter(k=>d[k]&&d[k].serie);
-    if(!da.length){ msg('#wMsg','Für diesen Zeitraum liegen keine Daten vor.','info');
-      $('#wWrap').innerHTML=''; return; }
-    const ersatz=da.sort((a,b)=>Math.abs(a-fenster)-Math.abs(b-fenster))[0];
-    msg('#wMsg',`Der Server kennt das ${fenster}-Tage-Fenster noch nicht und hat `
-      +`${ersatz} Tage geliefert. Bitte die aktuelle neo-proxy.py hochladen — `
-      +`danach lassen sich alle Zeiträume wählen.`,'err');
-    fenster=ersatz;
-  } else msg('#wMsg','');
-  $('#wWrap').innerHTML=[fenster].map(w=>{
-    const b=d[w],rows=b.rows,ges=rows.reduce((s,r)=>s+(r.cur||0),0);
-    const up=[...rows].filter(r=>r.prev>0).sort((x,y)=>(y.pct??-1e9)-(x.pct??-1e9)).slice(0,8);
-    const dn=[...rows].filter(r=>r.prev>0).sort((x,y)=>(x.pct??1e9)-(y.pct??1e9)).slice(0,8);
-    const mk=a=>a.map(r=>`<tr><td class="w">${esc(r.dim)}</td><td class="num">${eur(r.cur)}</td>
-      <td class="num ${cls(r.pct)}">${pct(r.pct)}</td><td class="num ${cls(r.pctVJ)}">${pct(r.pctVJ)}</td></tr>`).join('');
-    const H='<thead><tr><th>Name</th><th class="num">Umsatz</th><th class="num">Δ% VP</th><th class="num">Δ% VJ</th></tr></thead>';
-    // Das Wochentagsprofil steht im eigenen Reiter „Wochentage“ und bleibt hier weg
-    return `<div class="card"><h2>${w} Tage <span class="r hint">${b.aktuell[0]} – ${b.aktuell[1]} · Vorperiode ${b.vorperiode[0]} – ${b.vorperiode[1]} · Gesamt ${eur(ges)}</span></h2>
-      <canvas id="cWin${w}"></canvas>
-      <div class="hint" id="winInfo${w}" style="margin:12px 0 20px"></div>
-      <div class="two"><div><div class="mini">Stärkstes Wachstum</div><div class="scroll sm"><table>${H}<tbody>${mk(up)}</tbody></table></div></div>
-      <div><div class="mini">Stärkster Rückgang</div><div class="scroll sm"><table>${H}<tbody>${mk(dn)}</tbody></table></div></div></div>
-      </div>`;
-  }).join('');
-  // Chart erst nach dem Einhängen des Canvas-Elements zeichnen
-  zeichneFenster(fenster,d[fenster]);
-}
-
-function zeichneFenster(w,b){
-  if(!b||!b.serie) return;
-  const ansicht=$('#wAnsicht').value;
-  const roh=s=>(s||[]).map(x=>x.brutto);
-  const n=b.serie.length;
-  // Gleiche Regel wie beim Übersichts-Verlauf: bis 45 Tage Tageswerte, darüber Wochen
-  const bl = ansicht!=='auto' ? 1 : n<=45 ? 1 : 7;
-  const restVoll = bl===1 || n%bl===0;
-  const auf=v=>ansicht==='kum'?kumuliert(v)
-             :ansicht==='glatt'?glaetten(v,7)
-             :ansicht==='auto'?verdichten(v,bl):v;
-  const A=auf(roh(b.serie)), P=auf(roh(b.seriePrev)), J=auf(roh(b.serieVJ));
-
-  const endA=A[A.length-1]||0, endP=P[P.length-1]||0;
-  let dat=b.serie.map(x=>x.datum);
-  if(ansicht==='auto'&&bl>1){const o=[];for(let i=0;i<dat.length;i+=bl)o.push(dat[i]);dat=o}
-  const lab=ansicht==='auto'&&bl>1 ? dat : A.map((_,i)=>String(i+1));
-
-  // Farbverlauf unter der Hauptlinie
-  const flaeche=(ctx)=>{
-    const {chart}=ctx; if(!chart.chartArea) return `rgba(${CF().flaeche},.10)`;
-    const g=chart.ctx.createLinearGradient(0,chart.chartArea.top,0,chart.chartArea.bottom);
-    g.addColorStop(0,`rgba(${CF().flaeche},.22)`); g.addColorStop(1,`rgba(${CF().flaeche},0)`);
-    return g;
-  };
-  const dicht=A.length>45;
-  const tn=ansicht==='auto'?.2:.35;
-  const einheit=bl===7?' je Woche':'';
-  const ds=[
-    {label:'Aktuell'+einheit,data:A,borderColor:CF().akz,backgroundColor:flaeche,fill:true,
-     tension:tn,pointRadius:dicht?0:3.5,pointHoverRadius:6,borderWidth:2.5,pointStyle:'circle'},
-    {label:'Vorperiode',data:P,borderColor:CF().tick,borderDash:[6,4],
-     tension:tn,pointRadius:0,pointHoverRadius:5,fill:false,borderWidth:1.75},
-    {label:'Vorjahr',data:J,borderColor:CF().vj,borderDash:[2,4],
-     tension:tn,pointRadius:0,pointHoverRadius:5,fill:false,borderWidth:1.75},
-  ];
-  chart('cWin'+w,'line',lab,ds,{
-    interaction:{mode:'index',intersect:false},
-    plugins:{
-      legend:{labels:{usePointStyle:true,pointStyle:'line',color:CF().tick,
-        boxWidth:26,boxHeight:2,padding:16,font:{family:"Inter,sans-serif",size:12}}},
-      tooltip:{backgroundColor:CF().tipBg,borderColor:CF().rand,borderWidth:1,
-        titleColor:CF().tipT,bodyColor:CF().tipB,padding:11,cornerRadius:6,boxPadding:5,
-        titleFont:{family:"Inter,sans-serif",weight:'600'},
-        bodyFont:{family:"'IBM Plex Mono',monospace",size:12},
-        callbacks:{
-          title:it=>bl>1?('Woche ab '+it[0].label)
-                  :('Tag '+it[0].label+(dat[it[0].dataIndex]?'  ·  '+dat[it[0].dataIndex]:'')),
-          label:c=>' '+c.dataset.label+': '+eur(c.parsed.y),
-          afterBody:it=>{
-            const a=it[0]&&it[0].parsed.y, v=it[1]&&it[1].parsed.y;
-            if(a==null||!v) return '';
-            const p=(a/v-1)*100;
-            return '\nggü. Vorperiode: '+(p>=0?'+':'')+nf1.format(p)+' %';
-          }}}},
-    scales:{
-      x:{title:{display:bl===1,text:'Tag im Fenster',color:CF().tick,
-                font:{family:"Inter,sans-serif",size:11}},
-         ticks:{color:CF().tick,autoSkip:true,maxTicksLimit:w==='7'?7:10,
-                font:{family:"'IBM Plex Mono',monospace",size:11}},
-         grid:{display:false},border:{color:CF().rand}},
-      y:{ticks:{color:CF().tick,callback:v=>kompakt(v),
-                font:{family:"'IBM Plex Mono',monospace",size:11}},
-         grid:{color:CF().grid,drawTicks:false},border:{display:false},
-         beginAtZero:ansicht==='kum'}}});
-
-  // Ergebnis in Worten unter den Chart
-  const el=$('#winInfo'+w); if(!el) return;
-  if(ansicht==='kum'&&endP){
-    const diff=endA-endP, p=(endA/endP-1)*100;
-    el.innerHTML=`Nach ${w} Tagen ${diff>=0?'<b class="up">'+eur(diff)+' Vorsprung</b>':'<b class="down">'+eur(-diff)+' Rückstand</b>'}`
-      +` gegenüber der Vorperiode (${(p>=0?'+':'')+nf1.format(p)} %).`;
-  } else if(ansicht==='auto'){
-    let g=A.map((v,i)=>({v,i})).filter(x=>x.v!=null);
-    if(!restVoll&&g.length>2) g=g.slice(0,-1);
-    if(g.length>1){
-      const hi=g.reduce((a,b)=>b.v>a.v?b:a), lo=g.reduce((a,b)=>b.v<a.v?b:a);
-      const s=g.reduce((x,y)=>x+y.v,0)/g.length, pre=bl===7?'Woche ab ':'Tag ';
-      el.innerHTML=`${bl===7?'Wochenwerte':'Tageswerte'}. Stärkste Periode: <b>${pre}${lab[hi.i]}</b> `
-        +`mit ${eur(hi.v)} (${nf0.format(hi.v/s*100)} % des Schnitts). Schwächste: <b>${pre}${lab[lo.i]}</b> `
-        +`mit ${eur(lo.v)} (${nf0.format(lo.v/s*100)} %).`+(lo.v>0?` Spreizung ${nf1.format(hi.v/lo.v)}×.`:' In dieser Periode wurde kein Umsatz gebucht.')
-        +(restVoll?'':' Der letzte, angebrochene Block ist ausgenommen.');
-    } else el.textContent='';
-  } else {
-    el.textContent=ansicht==='glatt'
-      ? 'Gleitender Durchschnitt über 7 Tage — der Wochenrhythmus ist herausgerechnet.'
-      : 'Rohe Tageswerte. Die Zacken sind der normale Wochenverlauf.';
-  }
 }
 
 /* ---- Wochentage ---- */
@@ -2806,12 +2710,6 @@ async function loadAlerts(){
   const p=s=>`<span class="pill ${s==='hoch'?'p-bad':s==='mittel'?'p-warn':'p-mut'}">${s}</span>`;
   table('#tAlerts',rows,r=>[['',p(r.schwere)],['',esc(r.typ)],['w',esc(r.objekt)],
     ['',esc(r.ort||'—')],['w',esc(r.text)]]);
-}
-async function loadAlertBadge(){
-  try{const d=await raw('/data/alerts');
-    const h=d.alerts.filter(x=>x.schwere==='hoch').length;
-    $('#alertBadge').innerHTML=h?`<span class="pill p-bad">${h} Alerts hoch</span>`:`<span class="pill p-ok">keine kritischen Alerts</span>`;
-  }catch(_){}
 }
 
 /* ---- Produktsuche ---- */
@@ -3257,7 +3155,7 @@ $$('#segDichte button').forEach(b=>b.onclick=()=>{
   EIN.dichte=b.dataset.v; einstSichern(); themaAnwenden(); einstAnzeigen(); neuZeichnen()});
 $('#setZeitraum').onchange=()=>{EIN.zeitraum=$('#setZeitraum').value;einstSichern()};
 $('#setAnsicht').onchange=()=>{EIN.ansicht=$('#setAnsicht').value;einstSichern();
-  $('#tAnsicht').value=EIN.ansicht; $('#wAnsicht').value=EIN.ansicht; neuZeichnen()};
+  $('#tAnsicht').value=EIN.ansicht; neuZeichnen()};
 $('#setZeilen').onchange=()=>{EIN.zeilen=+$('#setZeilen').value;einstSichern();neuZeichnen()};
 $('#setAbmelden').onchange=()=>{EIN.abmeldenNach=+$('#setAbmelden').value;einstSichern();
   letzteAktion=Date.now();
@@ -3274,11 +3172,11 @@ $('#btnBackup2').onclick=async()=>{
 };
 $('#btnEinstReset').onclick=()=>{
   EIN=Object.assign({},STD); einstSichern(); themaAnwenden(); einstAnzeigen();
-  $('#tAnsicht').value=EIN.ansicht; $('#wAnsicht').value=EIN.ansicht;
+  $('#tAnsicht').value=EIN.ansicht;
   msg('#einstMsg','Auf Standardwerte zurückgesetzt.','ok'); neuZeichnen();
 };
 // gespeicherte Voreinstellungen auf die Bedienelemente übertragen
-$('#tAnsicht').value=EIN.ansicht; $('#wAnsicht').value=EIN.ansicht; $('#fQuick').value=EIN.zeitraum;
+$('#tAnsicht').value=EIN.ansicht; $('#fQuick').value=EIN.zeitraum;
 
 /* Startpunkt: erst den Modus feststellen (Server mit Anmeldung vs. lokal) */
 (async function start(){
